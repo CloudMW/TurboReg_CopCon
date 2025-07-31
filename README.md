@@ -56,12 +56,13 @@ Here's a general comparison of TurboReg with existing methods:
 
 ### Comparison with Existing Methods
 
-| **Method**           | **Performance (Recall)** | **CPU Efficiency** | **GPU Efficiency** |
-|----------------------|:------------------------:|:------------------:|:------------------:|
-| SC2-PCR [CVPR 2022]  | ✅                        | ❌                  | ✅                  |
-| MAC [CVPR 2023]      | ✅                        | ❌                  | ❌                  |
-| FastMAC [CVPR 2024]  | ❌                        | ✅                  | ✅                  |
-| **TurboReg [ICCV 2025]**  | ✅                        | ✅                  | ✅                  |
+| **Method Name** | **Venue (Year)** | **Performance (Recall)** | **CPU Efficiency** | **GPU Efficiency** |
+|------------------|------------------|:------------------------:|:------------------:|:------------------:|
+| SC2-PCR          | CVPR 2022        | ✅                        | ❌                  | ✅                  |
+| MAC              | CVPR 2023        | ✅                        | ❌                  | ❌                  |
+| FastMAC          | CVPR 2024        | ❌                        | ✅                  | ✅                  |
+| **TurboReg**     | **ICCV 2025**    | ✅                        | ✅                  | ✅                  |
+
 
 </div>
 
