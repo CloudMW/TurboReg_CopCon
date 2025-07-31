@@ -1,9 +1,8 @@
-
 <div align="center">
 
  <img src="./assets/title.png" alt="TurboReg Title" width="100%" />
 
-  ---
+---
 
   <a href="https://arxiv.org/pdf/2507.01439" target="_blank" rel="noopener noreferrer">
     <img src="https://img.shields.io/badge/Paper-TurboReg-blue" alt="Paper PDF">
@@ -11,6 +10,10 @@
   <a href="https://arxiv.org/abs/2507.01439">
     <img src="https://img.shields.io/badge/arXiv-2507.01439-b31b1b" alt="arXiv">
   </a>
+  <a href="https://www.bilibili.com/video/BV1atbSzJEdv?t=158.1">
+    <img src="https://img.shields.io/badge/Bilibili-TurboReg-ff69b4?logo=bilibili&logoColor=white)" alt="arXiv">
+  </a>
+
 
   <a href="https://laka-3dv.github.io/">Shaocheng Yan</a> &nbsp;
   <a href="https://shipc-ai.github.io/">Pengcheng Shi</a><sup>†</sup> &nbsp;
@@ -34,7 +37,6 @@
 
 
 
----
 
 ## 🌀 Overview
 

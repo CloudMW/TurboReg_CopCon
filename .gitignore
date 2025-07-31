@@ -12,6 +12,7 @@ __pycache__/
 .idea/
 *.swp
 
+
 push.sh
 
 # PyTorch
@@ -22,5 +23,7 @@ creadme.md
 TMP/
 tmp/
 tmp.py
+
+test_issue/
 
 turboreg_python
