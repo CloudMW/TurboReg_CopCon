@@ -61,7 +61,7 @@ Here's a general comparison of TurboReg with existing methods:
 | SC2-PCR          | CVPR 2022        | ✅                        | ❌                  | ✅                  |
 | MAC              | CVPR 2023        | ✅                        | ❌                  | ❌                  |
 | FastMAC          | CVPR 2024        | ❌                        | ✅                  | ✅                  |
-| **TurboReg**     | **ICCV 2025**    | ✅                        | ✅                  | ✅             (60+FPS)     |
+| **TurboReg**  🎖  | **ICCV 2025**    | ✅                        | ✅                 | ✅             (60+FPS)     |
 
 
 </div>
