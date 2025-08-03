@@ -203,14 +203,11 @@ python -m demo_py.exp_3dmatch --desc fcgf --dataname 3DMatch --dir_dataset "DIR_
 
 If you find this code useful for your work or use it in your project, please consider citing:
 ```
-@misc{yan2025turboregturbocliquerobustefficient,
-      title={TurboReg: TurboClique for Robust and Efficient Point Cloud Registration}, 
-      author={Shaocheng Yan and Pengcheng Shi and Zhenjun Zhao and Kaixin Wang and Kuang Cao and Ji Wu and Jiayuan Li},
-      year={2025},
-      eprint={2507.01439},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV},
-      url={https://arxiv.org/abs/2507.01439}, 
+@article{yan2025turboreg,
+  title={TurboReg: TurboClique for Robust and Efficient Point Cloud Registration},
+  author={Yan, Shaocheng and Shi, Pengcheng and Zhao, Zhenjun and Wang, Kaixin and Cao, Kuang and Wu, Ji and Li, Jiayuan},
+  journal={arXiv preprint arXiv:2507.01439},
+  year={2025}
 }
 ```
 
