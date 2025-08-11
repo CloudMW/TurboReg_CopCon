@@ -25,7 +25,8 @@
 
 <p align="center">
   <a href="https://arxiv.org/abs/2507.01439">
-    <img src="./assets/pipeline.png" alt="Teaser" width=70%>
+    <!-- <img src="./assets/pipeline.png" alt="Teaser" width=70%> -->
+    <img src="./assets/pipeline2.svg" alt="Teaser" width=70%>
   </a>
   <br>
   <em>A highly efficient and robust estimator for point cloud registration (PCR), supporting both CPU and GPU platforms.</em>
