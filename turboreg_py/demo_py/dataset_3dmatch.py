@@ -34,24 +34,30 @@ class TDMatchFCGFAndFPFHDataset:
 
         # Traverse all scenes in the dataset
         # for scene_dir in tqdm(os.listdir(self.dataset_path), desc="Loading scenes"):
-        for scene_dir in os.listdir(self.dataset_path):
+        for scene_dir in sorted(os.listdir(self.dataset_path)):
             scene_path = os.path.join(self.dataset_path, scene_dir)
             if not os.path.isdir(scene_path):
                 continue
 
             # Collect all matching files in the scene
             target_gt_name = "@corr_fcgf.txt" if self.descriptor_type == "fcgf" else "@corr.txt"
-            for file_name in os.listdir(scene_path):
+            for file_name in sorted(os.listdir(scene_path)):
                 if file_name.endswith(target_gt_name):
                     base_name = file_name.split("@")[0]
                     if self.descriptor_type == "fpfh":
                         corr_file = os.path.join(scene_path, file_name)
                         gtmat_file = os.path.join(
                             scene_path, f"{base_name}@GTmat.txt")
+                        corr_ind_file = os.path.join(scene_path, f"{base_name}@corr_ind.txt")
+                        src_npz_file = os.path.join(scene_path, f"{base_name.split('+')[0]}_fpfh.npz")
+                        dst_npz_file = os.path.join(scene_path, f"{base_name.split('+')[1]}_fpfh.npz")
                     elif self.descriptor_type == "fcgf":
                         corr_file = os.path.join(scene_path, file_name)
                         gtmat_file = os.path.join(
                             scene_path, f"{base_name}@GTmat_{self.descriptor_type}.txt")
+                        corr_ind_file = os.path.join(scene_path, f"{base_name}@corr_ind_{self.descriptor_type}.txt")
+                        src_npz_file = os.path.join(scene_path, f"{base_name.split('+')[0]}_fcgf.npz")
+                        dst_npz_file = os.path.join(scene_path, f"{base_name.split('+')[1]}_fcgf.npz")
                     src_cloud_file = os.path.join(
                         scene_path, f"{base_name.split('+')[0]}.ply")
                     dst_cloud_file = os.path.join(
@@ -62,7 +68,10 @@ class TDMatchFCGFAndFPFHDataset:
                             "corr_file": corr_file,
                             "gtmat_file": gtmat_file,
                             "src_cloud_file": src_cloud_file,
-                            "dst_cloud_file": dst_cloud_file
+                            "dst_cloud_file": dst_cloud_file,
+                            "corr_ind_file":corr_ind_file,
+                            "src_npz_file": src_npz_file,
+                            "dst_npz_file": dst_npz_file
                         })
 
         return matching_pairs
@@ -101,10 +110,12 @@ class TDMatchFCGFAndFPFHDataset:
         dst_cloud = np.asarray(o3d.io.read_point_cloud(
             pair_info["dst_cloud_file"]).points)
 
+
         return {
             "kpts_src": kpts_src,
             "kpts_dst": kpts_dst,
             "trans_gt": trans_gt,
             "pts_src": src_cloud,
-            "pts_dst": dst_cloud
+            "pts_dst": dst_cloud,
+
         }

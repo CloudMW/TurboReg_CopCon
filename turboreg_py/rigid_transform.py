@@ -114,13 +114,14 @@ def rigid_transform_3d(
     H = torch.bmm(Am.permute(0, 2, 1), Bm * W.unsqueeze(-1))  # [bs, 3, 3]
 
     # SVD to get rotation
-    U, S, Vt = torch.svd(H)
+    # Note: torch.svd returns (U, S, V), not (U, S, V^T)
+    U, S, V = torch.svd(H)
 
     # Ensure proper rotation (det(R) = 1)
-    delta_UV = torch.det(Vt.bmm(U.permute(0, 2, 1)))
+    delta_UV = torch.det(V.bmm(U.permute(0, 2, 1)))
     eye = torch.eye(3, device=A.device, dtype=A.dtype).unsqueeze(0).repeat(bs, 1, 1)
     eye[:, 2, 2] = delta_UV
-    R = Vt.bmm(eye).bmm(U.permute(0, 2, 1))  # [bs, 3, 3]
+    R = V.bmm(eye).bmm(U.permute(0, 2, 1))  # [bs, 3, 3]
 
     # Compute translation
     t = centroid_B.permute(0, 2, 1) - R.bmm(centroid_A.permute(0, 2, 1))  # [bs, 3, 1]

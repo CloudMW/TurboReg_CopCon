@@ -4,7 +4,7 @@ Contains verification and post-refinement functions
 """
 
 import torch
-from typing import Tuple, Optional
+from typing import Tuple
 from .rigid_transform import rigid_transform_3d
 from .model_selection import ModelSelection
 
@@ -142,8 +142,11 @@ def post_refinement(
     Returns:
         Refined transformation matrix [4, 4]
     """
-    inlier_threshold_list = torch.full((it_num,), inlier_threshold, device=initial_trans.device)
-    
+    # Match C++ version: use dtype and device from initial_trans
+    inlier_threshold_list = torch.full((it_num,), inlier_threshold,
+                                       dtype=initial_trans.dtype,
+                                       device=initial_trans.device)
+
     previous_inlier_num = 0
     pred_inlier = None
     
@@ -166,10 +169,9 @@ def post_refinement(
         else:
             previous_inlier_num = inlier_num
         
-        # Skip if no inliers
-        if inlier_num == 0:
-            break
-        
+        # Match C++ version: removed "if inlier_num == 0: break" check
+        # This ensures consistent behavior with C++ implementation
+
         # Compute weights for inliers
         weight = 1 / (1 + (L2_dis[pred_inlier] / inlier_threshold_list[i]).pow(2))
         

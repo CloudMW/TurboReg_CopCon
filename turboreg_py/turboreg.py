@@ -4,8 +4,7 @@ Main registration class for point cloud alignment
 """
 
 import torch
-from typing import Union
-from .model_selection import ModelSelection, MetricType, string_to_metric_type
+from .model_selection import ModelSelection, string_to_metric_type
 from .rigid_transform import RigidTransform
 from .core_turboreg import verification_v2_metric, post_refinement
 from .utils_pcr import coplanar_constraint
@@ -18,13 +17,13 @@ class TurboRegGPU:
     """
 
     def __init__(
-        self,
-        max_N: int,
-        tau_length_consis: float,
-        num_pivot: int,
-        radiu_nms: float,
-        tau_inlier: float,
-        metric_str: str = "IN"
+            self,
+            max_N: int,
+            tau_length_consis: float,
+            num_pivot: int,
+            radiu_nms: float,
+            tau_inlier: float,
+            metric_str: str = "IN"
     ):
         """
         Initialize TurboRegGPU
@@ -46,9 +45,12 @@ class TurboRegGPU:
         self.eval_metric = string_to_metric_type(metric_str)
 
     def run_reg(
-        self,
-        kpts_src: torch.Tensor,
-        kpts_dst: torch.Tensor
+            self,
+            kpts_src: torch.Tensor,
+            kpts_dst: torch.Tensor,
+            pts_src: torch.Tensor,
+            pts_dst: torch.Tensor,
+            corr_ind: torch.Tensor
     ) -> torch.Tensor:
         """
         Run registration and return transformation matrix
@@ -60,13 +62,16 @@ class TurboRegGPU:
         Returns:
             Transformation matrix [4, 4]
         """
-        rigid_transform = self.run_reg_cxx(kpts_src, kpts_dst)
+        rigid_transform = self.run_reg_cxx(kpts_src, kpts_dst, pts_src, pts_dst, corr_ind)
         return rigid_transform.get_transformation()
 
     def run_reg_cxx(
-        self,
-        kpts_src: torch.Tensor,
-        kpts_dst: torch.Tensor
+            self,
+            kpts_src: torch.Tensor,
+            kpts_dst: torch.Tensor,
+            pts_src: torch.Tensor,
+            pts_dst: torch.Tensor,
+            corr_ind: torch.Tensor
     ) -> RigidTransform:
         """
         Run registration and return RigidTransform object
@@ -106,7 +111,8 @@ class TurboRegGPU:
         C2 = C2.masked_fill(mask, 0)
 
         # Compute SC2 (compatibility scores)
-        SC2 = torch.matmul(torch.matmul(C2, C2), C2)
+        # Align with C++: SC2 = (C2 @ C2) * C2 (Hadamard product with C2)
+        SC2 = torch.matmul(C2, C2) * C2
 
         # Select pivots
         SC2_up = torch.triu(SC2, diagonal=1)  # Upper triangular
@@ -130,9 +136,9 @@ class TurboRegGPU:
 
         # Calculate scores for each 3-clique
         SC2_ADD_C3 = (
-            SC2_pivots.unsqueeze(1) +
-            SC2_for_search[pivots[:, 0]] +
-            SC2_for_search[pivots[:, 1]]
+                SC2_pivots.unsqueeze(1) +
+                SC2_for_search[pivots[:, 0]] +
+                SC2_for_search[pivots[:, 1]]
         )  # [num_pivot, N]
 
         # Mask the C3 scores
@@ -154,14 +160,17 @@ class TurboRegGPU:
         cliques_tensor[:num_pivots, 2] = topk_K2[:, 0]
 
         # Lower part
-        cliques_tensor[num_pivots:2*num_pivots, :2] = pivots
-        cliques_tensor[num_pivots:2*num_pivots, 2] = topk_K2[:, 1]
+        cliques_tensor[num_pivots:2 * num_pivots, :2] = pivots
+        cliques_tensor[num_pivots:2 * num_pivots, 2] = topk_K2[:, 1]
 
-        # Apply coplanar constraint
+        # Apply coplanar constraint (align with C++ behavior)
         cliques_tensor = coplanar_constraint(
             cliques_tensor,
             kpts_src,
             kpts_dst,
+            pts_src,
+            pts_dst,
+            corr_ind,
             threshold=0.5
         )
 
@@ -185,4 +194,3 @@ class TurboRegGPU:
 
         trans_final = RigidTransform(refined_trans)
         return trans_final
-
