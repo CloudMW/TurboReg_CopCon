@@ -10,6 +10,8 @@
 
 namespace turboreg
 {
+    torch::Tensor coplanar_constraint(const torch::Tensor &cliques_tensor, const torch::Tensor &kpts_src, const torch::Tensor &kpts_dst
+        ,float threshold);
 
     class TurboRegGPU
     {

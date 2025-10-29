@@ -77,8 +77,8 @@ RigidTransform TurboRegGPU::runRegCXX(torch::Tensor &kpts_src, torch::Tensor &kp
 
     // Initialize cliques tensor, size (num_pivots*2, 3)
     int num_pivots = pivots.size(0);
-    auto cliques_tensor = torch::zeros({num_pivots * 2, 3}, torch::kInt32).to(torch::kCUDA);
-
+    // auto cliques_tensor = torch::zeros({num_pivots * 2, 3}, torch::kInt32).to(torch::kCUDA);
+    auto cliques_tensor = torch::zeros({num_pivots * 2, 3}, torch::TensorOptions().dtype(torch::kInt32).device(kpts_src.device()));
     // Upper part
     cliques_tensor.index_put_({torch::indexing::Slice(0, num_pivots), torch::indexing::Slice(0, 2)}, pivots);
     cliques_tensor.index_put_({torch::indexing::Slice(0, num_pivots), 2}, topk_K2.index({torch::indexing::Slice(), 0}));
@@ -89,6 +89,8 @@ RigidTransform TurboRegGPU::runRegCXX(torch::Tensor &kpts_src, torch::Tensor &kp
 
     torch::Tensor best_in_num, best_trans, res, cliques_wise_trans, cliquewise_in_num;
     ModelSelection model_selector(this->eval_metric, this->tau_inlier);
+
+    cliques_tensor = coplanar_constraint(cliques_tensor,kpts_src,kpts_dst,0.5);
     verificationV2Metric(cliques_tensor, kpts_src, kpts_dst, model_selector,
                          best_in_num, best_trans, res,
                          cliques_wise_trans);

@@ -6,8 +6,7 @@ from dataclasses import dataclass
 
 from dataset_3dmatch import TDMatchFCGFAndFPFHDataset
 from demo_py.utils_pcr import compute_transformation_error, numpy_to_torch32
-import turboreg_gpu
-
+from turboreg_py import TurboRegGPU
 
 @dataclass
 class Args:
@@ -35,7 +34,7 @@ def main(device):
         raise ValueError(f"Invalid dataname: {args.dataname}. Expected '3DMatch' or '3DLoMatch'.")
 
     # TurboReg
-    reger = turboreg_gpu.TurboRegGPU(
+    reger = TurboRegGPU(
         args.max_N,
         args.tau_length_consis,
         args.num_pivot,

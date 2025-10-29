@@ -67,7 +67,19 @@ torch::Tensor load_trans_libtorch(const std::string &filename)
 
 int main()
 {
-    std::string data_dir = "../demo_data";
+    std::string data_dir = "D:\\Projects\\ClionProjects\\TurboReg\\demo_data";
+
+    // std::string data_dir = "../demo_data";
+
+    // 检查可用的设备
+    if (torch::cuda::is_available())
+    {
+        std::cout << "CUDA is available! Device count: " << torch::cuda::device_count() << std::endl;
+    }
+    else
+    {
+        std::cout << "Using CPU for computations." << std::endl;
+    }
 
     std::regex pattern("(\\d+)_fpfh_kpts_src.txt");
     std::vector<std::string> idx_list;

@@ -12,7 +12,8 @@ target_include_directories(turboreg_gpu PRIVATE
     ${CMAKE_SOURCE_DIR}/turboreg/include
     ${EIGEN3_INCLUDE_DIR}
     ${TORCH_INCLUDE_DIRS}
+        ${PCL_INCLUDE_DIRS}
 )
 
-target_link_libraries(turboreg_gpu PRIVATE ${TORCH_LIBRARIES})
+target_link_libraries(turboreg_gpu PRIVATE ${TORCH_LIBRARIES} {PCL_LIBRARIES})
 set_target_properties(turboreg_gpu PROPERTIES PREFIX "")
