@@ -195,10 +195,10 @@ class TurboRegGPU:
         )
 
 
-        refined_trans = refined_trans.cpu().numpy()
-        trans_gt = trans_gt.cpu().numpy()
+        refined_trans_numpy = refined_trans.cpu().numpy()
+        trans_gt_numpy = trans_gt.cpu().numpy()
 
-        rre, rte =compute_transformation_error(trans_gt, refined_trans)
+        rre, rte =compute_transformation_error(trans_gt_numpy, refined_trans_numpy)
         is_succ = (rre < 15) & (rte < 0.3)
         if not is_succ:
             import turboreg_py.visualization_debug as vis_debug
