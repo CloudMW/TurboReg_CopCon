@@ -43,7 +43,7 @@ def local_filter(cliques_tensor: torch.Tensor,
 
     # visualize_knn_neighbors(kpts_src_prime, src_knn_points, corr_kpts_src_sub_transformed)
     # (neighbor_distances)
-    ind = (-1*neighbor_distances).topk(k=min(10,neighbor_distances.shape[0]))[1]
+    ind = (-1*neighbor_distances).topk(k=min(100,neighbor_distances.shape[0]))[1]
 
     return cliques_tensor[ind]
 

@@ -1,0 +1,5 @@
+Total: 1781
+Successful: 1059
+Recall(%%): 59.461
+Avg_RRE_of_correct: 3.729937
+Avg_RTE_of_correct: 0.104513
