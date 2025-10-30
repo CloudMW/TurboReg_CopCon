@@ -4,8 +4,8 @@ import tyro
 import torch
 from dataclasses import dataclass
 
-from dataset_3dmatch import TDMatchFCGFAndFPFHDataset
-from demo_py.utils_pcr import compute_transformation_error, numpy_to_torch32, numpy_to_torchint32
+from turboreg_py.demo_py.dataset_3dmatch import TDMatchFCGFAndFPFHDataset
+from turboreg_py.demo_py.utils_pcr import compute_transformation_error, numpy_to_torch32, numpy_to_torchint32
 from turboreg_py import TurboRegGPU
 
 @dataclass

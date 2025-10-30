@@ -3,7 +3,8 @@ import numpy as np
 
 def numpy_to_torch32(device, *arrays):
     return [torch.tensor(array, device=device, dtype=torch.float32) for array in arrays]
-
+def numpy_to_torchint32(device, *arrays):
+    return [torch.tensor(array, device=device, dtype=torch.int32) for array in arrays]
 def compute_transformation_error(trans_gt: np.ndarray, trans_pred: np.ndarray):
     """
     Compute the transformation error between the predicted and ground truth 4x4 rigid transformation matrices.
