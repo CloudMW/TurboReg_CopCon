@@ -163,15 +163,15 @@ class TurboRegGPU:
         cliques_tensor[num_pivots:2 * num_pivots, 2] = topk_K2[:, 1]
 
         # Apply coplanar constraint (align with C++ behavior)
-        # cliques_tensor = coplanar_constraint(
-        #     cliques_tensor,
-        #     corr_kpts_src,
-        #     corr_kpts_dst,
-        #     pts_src,
-        #     pts_dst,
-        #     corr_ind,
-        #     threshold=0.5
-        # )
+        cliques_tensor = coplanar_constraint(
+            cliques_tensor,
+            corr_kpts_src,
+            corr_kpts_dst,
+            kpts_src,
+            kpts_dst,
+            corr_ind,
+            threshold=0.5
+        )
 
         # Verification with metric selection
         model_selector = ModelSelection(self.eval_metric, self.tau_inlier)

@@ -18,10 +18,10 @@ except ImportError:
 
 def coplanar_constraint(
         cliques_tensor: torch.Tensor,
+        corr_kpts_src: torch.Tensor,
+        corr_kpts_dst: torch.Tensor,
         kpts_src: torch.Tensor,
         kpts_dst: torch.Tensor,
-        pts_src: torch.Tensor,
-        pts_dst: torch.Tensor,
         corr_ind: torch.Tensor,
         threshold: float = 0.5
 ) -> torch.Tensor:
@@ -30,15 +30,15 @@ def coplanar_constraint(
 
     Args:
         cliques_tensor: Clique indices [N, 3]
-        kpts_src: Source keypoints [M, 3]
-        kpts_dst: Target keypoints [M, 3]
+        corr_kpts_src: Source keypoints [M, 3]
+        corr_kpts_dst: Target keypoints [M, 3]
         threshold: Threshold for normal similarity (default: 0.5)
 
     Returns:
         Filtered cliques tensor
     """
     N = cliques_tensor.size(0)
-    original_device = kpts_src.device
+    original_device = corr_kpts_src.device
 
     # Move to CPU for Open3D; fallback to PyTorch if Open3D not available
     # kpts_src_cpu = kpts_src.cpu()
@@ -47,8 +47,8 @@ def coplanar_constraint(
     # pts_dst_cpu = pts_dst.cpu()
     # cliques_cpu = cliques_tensor.cpu()
 
-    src_normals_tensor = compute_normals_o3d(pts_src, k_neighbors=10)[corr_ind[:,0]]
-    dst_normals_tensor = compute_normals_o3d(pts_dst, k_neighbors=10)[corr_ind[:,1]]
+    src_normals_tensor = compute_normals_o3d(kpts_src, k_neighbors=10)[corr_ind[:,0]]
+    dst_normals_tensor = compute_normals_o3d(kpts_dst, k_neighbors=10)[corr_ind[:,1]]
 
 
     # Get normals for each clique
