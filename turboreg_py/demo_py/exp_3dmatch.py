@@ -5,7 +5,7 @@ import torch
 from dataclasses import dataclass
 
 from dataset_3dmatch import TDMatchFCGFAndFPFHDataset
-from demo_py.utils_pcr import compute_transformation_error, numpy_to_torch32
+from demo_py.utils_pcr import compute_transformation_error, numpy_to_torch32, numpy_to_torchint32
 from turboreg_py import TurboRegGPU
 
 @dataclass
@@ -71,34 +71,59 @@ def main(device):
     ds = TDMatchFCGFAndFPFHDataset(base_dir=args.dir_dataset, dataset_type=processed_dataname, descriptor_type=args.desc)
 
     num_succ = 0
-    for i in range(len(ds)):
+    for i in range(1400,len(ds)):
         data = ds[i]
-        kpts_src, kpts_dst, trans_gt ,pts_src,pts_dst= data['kpts_src'], data['kpts_dst'], data['trans_gt'],data['pts_src'],data['pts_dst']
-        
-        # Move keypoints to CUDA device
-        kpts_src, kpts_dst,pts_src,pts_dst = numpy_to_torch32(
-            device, kpts_src, kpts_dst,pts_src,pts_dst
-        )
-        src_ind = find_keypoint_indices_kdtree(pts_src, kpts_src, eps=1e-6)
-        dst_ind = find_keypoint_indices_kdtree(pts_dst, kpts_dst, eps=1e-6)
 
-        corr_ind = torch.stack([src_ind, dst_ind], dim=1)  # [M, 2]
+        # "corr_kpts_src": corr_kpts_src,
+        # "corr_kpts_dst": corr_kpts_dst,
+        # "trans_gt": trans_gt,
+        # "pts_src": src_cloud,
+        # "pts_dst": dst_cloud,
+        # "kpts_src": kpts_src,
+        # "kpts_dst": kpts_dst,
+        # "corr_ind": corr_ind
+        # kpts_src, kpts_dst, trans_gt ,pts_src,pts_dst= data['kpts_src'], data['kpts_dst'], data['trans_gt'],data['pts_src'],data['pts_dst']
+
+        corr_kpts_src ,corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst,corr_ind = data['corr_kpts_src'], data['corr_kpts_dst'], data['trans_gt'], data['pts_src'], data['pts_dst'], data['kpts_src'], data['kpts_dst'], data['corr_ind']
+        # Move keypoints to CUDA device
+        corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst = numpy_to_torch32(
+            device,  corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst
+        )
+        [corr_ind] = numpy_to_torchint32(device,corr_ind)
+        # src_ind = find_keypoint_indices_kdtree(pts_src, kpts_src, eps=1e-6)
+        # dst_ind = find_keypoint_indices_kdtree(pts_dst, kpts_dst, eps=1e-6)
+
+        # corr_ind = torch.stack([src_ind, dst_ind], dim=1)  # [M, 2]
         # Run TurboReg
         t1 = time.time()
-        trans_pred_torch = reger.run_reg(kpts_src, kpts_dst,pts_src,pts_dst,corr_ind)
+        trans_pred_torch = reger.run_reg(corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst,corr_ind )
         T_reg = (time.time() - t1) * 1000
         trans_pred = trans_pred_torch.cpu().numpy()
+        trans_gt = trans_gt.cpu().numpy()
         rre, rte = compute_transformation_error(trans_gt, trans_pred)
         is_succ = (rre < 15) & (rte < 0.3)
+        if not is_succ:
+            print("Registration failed for item {}/{}: RRE={:.3f}, RTE={:.3f}".format().format(i+1, len(ds), rre, rte))
         num_succ += is_succ
         
         print(f"Processed item {i+1}/{len(ds)}: Registration time: {T_reg:.3f} ms, RR= {(num_succ / (i+1)) * 100:.3f}%")
 
 if __name__ == "__main__":
+    import os
+    def is_debugging():
+        # 检测常见调试器环境变量
+        debug_env_vars = [
+            "PYDEVD_LOAD_VALUES_ASYNC",  # PyCharm/VS Code 调试器
+            "DEBUGPY_DEBUG_MODE",  # VS Code 调试器
+            "PYCHARM_DEBUG",  # PyCharm 调试器
+        ]
+        return any(var in os.environ for var in debug_env_vars)
+
+
     if torch.cuda.is_available():
         print("CUDA is available. Using GPU for computations.")
         device = torch.device("cuda:0")
-    elif torch.xpu.is_available():
+    elif not is_debugging() and torch.xpu.is_available():
         print("XPU is available. Using XPU for computations.")
         device = torch.device("xpu:0")
     else:

@@ -62,7 +62,8 @@ class TDMatchFCGFAndFPFHDataset:
                         scene_path, f"{base_name.split('+')[0]}.ply")
                     dst_cloud_file = os.path.join(
                         scene_path, f"{base_name.split('+')[1]}.ply")
-
+                    src_kpts_file = os.path.join(scene_path, f"{base_name.split('+')[0]}.pcd")
+                    dst_kpts_file = os.path.join(scene_path, f"{base_name.split('+')[1]}.pcd")
                     if os.path.exists(gtmat_file) and os.path.exists(src_cloud_file) and os.path.exists(dst_cloud_file):
                         matching_pairs.append({
                             "corr_file": corr_file,
@@ -71,7 +72,9 @@ class TDMatchFCGFAndFPFHDataset:
                             "dst_cloud_file": dst_cloud_file,
                             "corr_ind_file":corr_ind_file,
                             "src_npz_file": src_npz_file,
-                            "dst_npz_file": dst_npz_file
+                            "dst_npz_file": dst_npz_file,
+                            "src_kpts_file": src_kpts_file,
+                            "dst_kpts_file": dst_kpts_file,
                         })
 
         return matching_pairs
@@ -98,8 +101,8 @@ class TDMatchFCGFAndFPFHDataset:
 
         # Load correspondences
         correspondences = np.loadtxt(pair_info["corr_file"], delimiter=' ')
-        kpts_src = correspondences[:, :3]
-        kpts_dst = correspondences[:, 3:]
+        corr_kpts_src = correspondences[:, :3]
+        corr_kpts_dst = correspondences[:, 3:]
 
         # Load ground truth transformation matrix
         trans_gt = np.loadtxt(pair_info["gtmat_file"], delimiter=' ')
@@ -110,12 +113,19 @@ class TDMatchFCGFAndFPFHDataset:
         dst_cloud = np.asarray(o3d.io.read_point_cloud(
             pair_info["dst_cloud_file"]).points)
 
+        corr_ind = np.loadtxt(pair_info["corr_ind_file"], dtype=np.int64)
 
+        kpts_src = np.asarray(o3d.io.read_point_cloud(
+            pair_info["src_kpts_file"]).points)
+        kpts_dst = np.asarray(o3d.io.read_point_cloud(
+            pair_info["dst_kpts_file"]).points)
         return {
-            "kpts_src": kpts_src,
-            "kpts_dst": kpts_dst,
+            "corr_kpts_src": corr_kpts_src,
+            "corr_kpts_dst": corr_kpts_dst,
             "trans_gt": trans_gt,
             "pts_src": src_cloud,
             "pts_dst": dst_cloud,
-
+            "kpts_src": kpts_src,
+            "kpts_dst": kpts_dst,
+            "corr_ind": corr_ind
         }

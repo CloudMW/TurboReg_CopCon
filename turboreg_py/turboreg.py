@@ -8,8 +8,7 @@ from .model_selection import ModelSelection, string_to_metric_type
 from .rigid_transform import RigidTransform
 from .core_turboreg import verification_v2_metric, post_refinement
 from .utils_pcr import coplanar_constraint
-
-
+from turboreg_py.demo_py.utils_pcr import *
 class TurboRegGPU:
     """
     TurboReg GPU accelerated point cloud registration
@@ -46,11 +45,13 @@ class TurboRegGPU:
 
     def run_reg(
             self,
-            kpts_src: torch.Tensor,
-            kpts_dst: torch.Tensor,
-            pts_src: torch.Tensor,
-            pts_dst: torch.Tensor,
-            corr_ind: torch.Tensor
+            corr_kpts_src: torch.Tensor, corr_kpts_dst: torch.Tensor, trans_gt: torch.Tensor, src_cloud: torch.Tensor,
+            dst_cloud: torch.Tensor, kpts_src: torch.Tensor, kpts_dst: torch.Tensor, corr_ind: torch.Tensor
+            # kpts_src: torch.Tensor,
+            #     kpts_dst: torch.Tensor,
+            #     pts_src: torch.Tensor,
+            #     pts_dst: torch.Tensor,
+            #     corr_ind: torch.Tensor
     ) -> torch.Tensor:
         """
         Run registration and return transformation matrix
@@ -62,16 +63,14 @@ class TurboRegGPU:
         Returns:
             Transformation matrix [4, 4]
         """
-        rigid_transform = self.run_reg_cxx(kpts_src, kpts_dst, pts_src, pts_dst, corr_ind)
+        rigid_transform = self.run_reg_cxx(corr_kpts_src, corr_kpts_dst, trans_gt, src_cloud, dst_cloud, kpts_src,
+                                           kpts_dst, corr_ind)
         return rigid_transform.get_transformation()
 
     def run_reg_cxx(
             self,
-            kpts_src: torch.Tensor,
-            kpts_dst: torch.Tensor,
-            pts_src: torch.Tensor,
-            pts_dst: torch.Tensor,
-            corr_ind: torch.Tensor
+            corr_kpts_src: torch.Tensor, corr_kpts_dst: torch.Tensor, trans_gt: torch.Tensor, src_cloud: torch.Tensor,
+            dst_cloud: torch.Tensor, kpts_src: torch.Tensor, kpts_dst: torch.Tensor, corr_ind: torch.Tensor
     ) -> RigidTransform:
         """
         Run registration and return RigidTransform object
@@ -84,18 +83,18 @@ class TurboRegGPU:
             RigidTransform object
         """
         # Control the number of keypoints
-        N_node = min(kpts_src.size(0), self.max_N)
-        if N_node < kpts_src.size(0):
-            kpts_src = kpts_src[:N_node]
-            kpts_dst = kpts_dst[:N_node]
+        N_node = min(corr_kpts_src.size(0), self.max_N)
+        if N_node < corr_kpts_src.size(0):
+            corr_kpts_src = corr_kpts_src[:N_node]
+            corr_kpts_dst = corr_kpts_dst[:N_node]
 
         # Compute C2 (compatibility matrix)
         src_dist = torch.norm(
-            kpts_src.unsqueeze(1) - kpts_src.unsqueeze(0),
+            corr_kpts_src.unsqueeze(1) - corr_kpts_src.unsqueeze(0),
             p=2, dim=-1
         )  # [N, N]
         target_dist = torch.norm(
-            kpts_dst.unsqueeze(1) - kpts_dst.unsqueeze(0),
+            corr_kpts_dst.unsqueeze(1) - corr_kpts_dst.unsqueeze(0),
             p=2, dim=-1
         )  # [N, N]
         cross_dist = torch.abs(src_dist - target_dist)  # [N, N]
@@ -152,7 +151,7 @@ class TurboRegGPU:
         cliques_tensor = torch.zeros(
             (num_pivots * 2, 3),
             dtype=torch.int32,
-            device=kpts_src.device
+            device=corr_kpts_src.device
         )
 
         # Upper part
@@ -164,33 +163,51 @@ class TurboRegGPU:
         cliques_tensor[num_pivots:2 * num_pivots, 2] = topk_K2[:, 1]
 
         # Apply coplanar constraint (align with C++ behavior)
-        cliques_tensor = coplanar_constraint(
-            cliques_tensor,
-            kpts_src,
-            kpts_dst,
-            pts_src,
-            pts_dst,
-            corr_ind,
-            threshold=0.5
-        )
+        # cliques_tensor = coplanar_constraint(
+        #     cliques_tensor,
+        #     corr_kpts_src,
+        #     corr_kpts_dst,
+        #     pts_src,
+        #     pts_dst,
+        #     corr_ind,
+        #     threshold=0.5
+        # )
 
         # Verification with metric selection
         model_selector = ModelSelection(self.eval_metric, self.tau_inlier)
-        best_in_num, best_trans, res, cliques_wise_trans = verification_v2_metric(
+        best_in_num, best_trans, res, cliques_wise_trans, idx_best_guess = verification_v2_metric(
             cliques_tensor,
-            kpts_src,
-            kpts_dst,
+            corr_kpts_src,
+            corr_kpts_dst,
             model_selector
         )
+
+
+
 
         # Post refinement
         refined_trans = post_refinement(
             best_trans,
-            kpts_src,
-            kpts_dst,
+            corr_kpts_src,
+            corr_kpts_dst,
             it_num=20,
             inlier_threshold=self.tau_inlier
         )
+
+
+        refined_trans = refined_trans.cpu().numpy()
+        trans_gt = trans_gt.cpu().numpy()
+
+        rre, rte =compute_transformation_error(trans_gt, refined_trans)
+        is_succ = (rre < 15) & (rte < 0.3)
+        if not is_succ:
+            import turboreg_py.visualization_debug as vis_debug
+            vis_debug.visualization_from_clique_configurable(src_cloud.cpu().numpy(), dst_cloud.cpu().numpy(),
+                                                             kpts_src.cpu().numpy(), kpts_dst.cpu().numpy(),
+                                                             corr_ind.cpu().numpy(), trans_gt.cpu().numpy(),
+                                                             best_trans.cpu().numpy(),
+                                                             set(cliques_tensor.cpu().numpy()[idx_best_guess]),
+                                                             )
 
         trans_final = RigidTransform(refined_trans)
         return trans_final

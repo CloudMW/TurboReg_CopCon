@@ -87,7 +87,7 @@ def verification_v2_metric(
     kpts_src: torch.Tensor,
     kpts_dst: torch.Tensor,
     model_selector: ModelSelection
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,torch.Tensor]:
     """
     Verification function with custom metric selection
     
@@ -119,7 +119,7 @@ def verification_v2_metric(
     best_in_num = torch.tensor(0.0)
     res = torch.tensor(0.0)
     
-    return best_in_num, best_trans, res, cliques_wise_trans
+    return best_in_num, best_trans, res, cliques_wise_trans,idx_best_guess
 
 
 def post_refinement(
