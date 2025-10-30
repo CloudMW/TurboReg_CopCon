@@ -104,8 +104,9 @@ def verification_v2_metric(
         cliques_wise_trans: Transformations for all cliques
     """
     # Select keypoints for each clique
-    kpts_src_sub = kpts_src[cliques_tensor.view(-1)].view(-1, 3, 3)  # [C, 3, 3]
-    kpts_dst_sub = kpts_dst[cliques_tensor.view(-1)].view(-1, 3, 3)  # [C, 3, 3]
+    N,C = cliques_tensor.shape
+    kpts_src_sub = kpts_src[cliques_tensor.view(-1)].view(-1, C, 3)  # [C, 3, 3]
+    kpts_dst_sub = kpts_dst[cliques_tensor.view(-1)].view(-1, C, 3)  # [C, 3, 3]
     
     # Compute transformation for each clique
     cliques_wise_trans = rigid_transform_3d(kpts_src_sub, kpts_dst_sub)  # [C, 4, 4]

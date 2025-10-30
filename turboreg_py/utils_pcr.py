@@ -37,7 +37,7 @@ def coplanar_constraint(
     Returns:
         Filtered cliques tensor
     """
-    N = cliques_tensor.size(0)
+    N ,C= cliques_tensor.shape
     original_device = corr_kpts_src.device
 
     # Move to CPU for Open3D; fallback to PyTorch if Open3D not available
@@ -52,8 +52,8 @@ def coplanar_constraint(
 
 
     # Get normals for each clique
-    src_norms = src_normals_tensor[cliques_tensor.view(-1)].view(N, 3, 3)  # [N, 3, 3]
-    dst_norms = dst_normals_tensor[cliques_tensor.view(-1)].view(N, 3, 3)  # [N, 3, 3]
+    src_norms = src_normals_tensor[cliques_tensor.view(-1)].view(N, C, 3)  # [N, 3, 3]
+    dst_norms = dst_normals_tensor[cliques_tensor.view(-1)].view(N, C, 3)  # [N, 3, 3]
 
     # Extract normals for three points
     src_n0, src_n1, src_n2 = src_norms[:, 0], src_norms[:, 1], src_norms[:, 2]

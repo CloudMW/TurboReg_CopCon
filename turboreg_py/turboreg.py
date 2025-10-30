@@ -87,7 +87,7 @@ class TurboRegGPU:
         if N_node < corr_kpts_src.size(0):
             corr_kpts_src = corr_kpts_src[:N_node]
             corr_kpts_dst = corr_kpts_dst[:N_node]
-
+        k_cliques_size = 5
         # Compute C2 (compatibility matrix)
         src_dist = torch.norm(
             corr_kpts_src.unsqueeze(1) - corr_kpts_src.unsqueeze(0),
@@ -144,23 +144,27 @@ class TurboRegGPU:
         SC2_C3 = SC2_ADD_C3 * indic_c3_torch.float()
 
         # Get top-2 indices for each row
-        topk_K2 = torch.topk(SC2_C3, k=2, dim=1)[1]  # [num_pivot, 2]
+        topk_K2 = torch.topk(SC2_C3, k=k_cliques_size-2, dim=1)[1]  # [num_pivot, 2]
 
         # Initialize cliques tensor [num_pivot*2, 3]
         num_pivots = pivots.size(0)
         cliques_tensor = torch.zeros(
-            (num_pivots * 2, 3),
+            (num_pivots , k_cliques_size),
             dtype=torch.int32,
             device=corr_kpts_src.device
         )
 
         # Upper part
         cliques_tensor[:num_pivots, :2] = pivots
-        cliques_tensor[:num_pivots, 2] = topk_K2[:, 0]
 
+        for idx in range(k_cliques_size-2):
+            cliques_tensor[:num_pivots, 2 + idx] = topk_K2[:, idx]
+
+        # cliques_tensor[:num_pivots, 2] = topk_K2[:, 0]
+        # cliques_tensor[:num_pivots, 3] = topk_K2[:, 1]
         # Lower part
-        cliques_tensor[num_pivots:2 * num_pivots, :2] = pivots
-        cliques_tensor[num_pivots:2 * num_pivots, 2] = topk_K2[:, 1]
+        # cliques_tensor[num_pivots:2 * num_pivots, :2] = pivots
+        # cliques_tensor[num_pivots:2 * num_pivots, 2] = topk_K2[:, 1]
 
         # Apply coplanar constraint (align with C++ behavior)
         # cliques_tensor = coplanar_constraint(
@@ -170,7 +174,7 @@ class TurboRegGPU:
         #     kpts_src,
         #     kpts_dst,
         #     corr_ind,
-        #     threshold=0.5
+        #     threshold=0.4
         # )
 
         # local filter

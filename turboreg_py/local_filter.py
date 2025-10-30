@@ -13,8 +13,37 @@ def local_filter(cliques_tensor: torch.Tensor,
                  corr_ind: torch.Tensor,
                  threshold=0.5,
                  k=20):
-    corr_kpts_src_sub = corr_kpts_src[cliques_tensor.view(-1)].view(-1, 3, 3)  # [C, 3, 3]
-    corr_kpts_dst_sub = corr_kpts_dst[cliques_tensor.view(-1)].view(-1, 3, 3)  # [C, 3, 3]
+    k_list = [50]
+    N,_ = cliques_tensor.shape
+    neighbor_distances = torch.Tensor(N,0).to(corr_kpts_src.device)
+    for i in k_list:
+        neighbor_distances_one = local_filter_(
+            cliques_tensor,
+            corr_kpts_src,
+            corr_kpts_dst,
+            kpts_src,
+            kpts_dst,
+            corr_ind,
+            threshold=0.5,
+            k=i,
+        )
+        neighbor_distances=torch.concat((neighbor_distances, neighbor_distances_one.unsqueeze(-1)), dim=-1)
+
+    neighbor_distances = neighbor_distances.mean(-1)
+    ind = (neighbor_distances).topk(k=min(20,neighbor_distances.shape[0]))[1]
+    return cliques_tensor[ind]
+
+def local_filter_(cliques_tensor: torch.Tensor,
+                 corr_kpts_src: torch.Tensor,
+                 corr_kpts_dst: torch.Tensor,
+                 kpts_src: torch.Tensor,
+                 kpts_dst: torch.Tensor,
+                 corr_ind: torch.Tensor,
+                 threshold=0.5,
+                 k=20):
+    N,C= cliques_tensor.shape
+    corr_kpts_src_sub = corr_kpts_src[cliques_tensor.view(-1)].view(-1, C, 3)  # [C, 3, 3]
+    corr_kpts_dst_sub = corr_kpts_dst[cliques_tensor.view(-1)].view(-1, C, 3)  # [C, 3, 3]
 
     # Compute transformation for each clique
     cliques_wise_trans = rigid_transform_3d(corr_kpts_src_sub, corr_kpts_dst_sub)  # [C, 4, 4]
@@ -39,13 +68,13 @@ def local_filter(cliques_tensor: torch.Tensor,
     dst_knn_points = knn_search(corr_kpts_dst_sub, kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_sub.shape[0], 1, 1), k=k)
 
     # 计算src和dst对应邻居点之间的最近距离
-    neighbor_distances = compute_neighbor_distances(src_knn_points, dst_knn_points).mean(dim=(1, 2)) # [N, 3, k]
+    mae = compute_neighbor_distances(src_knn_points, dst_knn_points).mean(dim=(1, 2)) # [N, 3, k]
 
     # visualize_knn_neighbors(kpts_src_prime, src_knn_points, corr_kpts_src_sub_transformed)
     # (neighbor_distances)
-    ind = (-1*neighbor_distances).topk(k=min(100,neighbor_distances.shape[0]))[1]
 
-    return cliques_tensor[ind]
+
+    return mae
 
 
 def knn_search(corr_kpts_src_sub_transformed, kpts_src_prime, k=10):
@@ -55,7 +84,7 @@ def knn_search(corr_kpts_src_sub_transformed, kpts_src_prime, k=10):
 
     N = corr_kpts_src_sub_transformed.shape[0]
     M = kpts_src_prime.shape[1]
-
+    C = corr_kpts_src_sub_transformed.shape[1]  # Should be 3
     # Compute pairwise distances for each transformation
     # For each transformation i, compute distance between 3 keypoints and M source points
     # Reshape for broadcasting: [N, 3, 1, 3] - [N, 1, M, 3] = [N, 3, M, 3]
@@ -73,7 +102,7 @@ def knn_search(corr_kpts_src_sub_transformed, kpts_src_prime, k=10):
     knn_indices_expanded = knn_indices.unsqueeze(-1).expand(-1, -1, -1, 3)  # [N, 3, k, 3]
 
     # Expand kpts_src_prime for gathering: [N, 1, M, 3] -> [N, 3, M, 3]
-    kpts_src_prime_expanded = kpts_src_prime.unsqueeze(1).expand(-1, 3, -1, -1)  # [N, 3, M, 3]
+    kpts_src_prime_expanded = kpts_src_prime.unsqueeze(1).expand(-1, C, -1, -1)  # [N, 3, M, 3]
 
     # Gather k nearest neighbors: [N, 3, k, 3]
     knn_points = torch.gather(kpts_src_prime_expanded, 2, knn_indices_expanded)  # [N, 3, k, 3]
@@ -103,8 +132,9 @@ def compute_neighbor_distances(src_knn_points: torch.Tensor, dst_knn_points: tor
 
     # 对于每个src邻居点，找到最近的dst邻居点的距离
     min_distances, _ = torch.min(dist_matrix, dim=-1)  # [N, 3, k]
-
-    return min_distances
+    tou = 0.05
+    mae =torch.where( min_distances<tou,torch.abs(tou - min_distances)/tou,0)
+    return mae
 
 
 def visualize_knn_neighbors(
