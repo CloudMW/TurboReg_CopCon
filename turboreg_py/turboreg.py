@@ -173,6 +173,20 @@ class TurboRegGPU:
             threshold=0.5
         )
 
+        # local filter
+        from turboreg_py.local_filter import local_filter
+        cliques_tensor = local_filter(
+            cliques_tensor,
+            corr_kpts_src,
+            corr_kpts_dst,
+            kpts_src,
+            kpts_dst,
+            corr_ind,
+            threshold=0.5,
+            k=50,
+        )
+
+
         # Verification with metric selection
         model_selector = ModelSelection(self.eval_metric, self.tau_inlier)
         best_in_num, best_trans, res, cliques_wise_trans, idx_best_guess = verification_v2_metric(
@@ -195,19 +209,19 @@ class TurboRegGPU:
         )
 
 
-        refined_trans_numpy = refined_trans.cpu().numpy()
-        trans_gt_numpy = trans_gt.cpu().numpy()
-
-        rre, rte =compute_transformation_error(trans_gt_numpy, refined_trans_numpy)
-        is_succ = (rre < 15) & (rte < 0.3)
-        if not is_succ:
-            import turboreg_py.visualization_debug as vis_debug
-            vis_debug.visualization_from_clique_configurable(src_cloud.cpu().numpy(), dst_cloud.cpu().numpy(),
-                                                             kpts_src.cpu().numpy(), kpts_dst.cpu().numpy(),
-                                                             corr_ind.cpu().numpy(), trans_gt.cpu().numpy(),
-                                                             best_trans.cpu().numpy(),
-                                                             set(cliques_tensor.cpu().numpy()[idx_best_guess]),
-                                                             )
+        # refined_trans_numpy = refined_trans.cpu().numpy()
+        # trans_gt_numpy = trans_gt.cpu().numpy()
+        #
+        # rre, rte =compute_transformation_error(trans_gt_numpy, refined_trans_numpy)
+        # is_succ = (rre < 15) & (rte < 0.3)
+        # if not is_succ:
+        #     import turboreg_py.visualization_debug as vis_debug
+        #     vis_debug.visualization_from_clique_configurable(src_cloud.cpu().numpy(), dst_cloud.cpu().numpy(),
+        #                                                      kpts_src.cpu().numpy(), kpts_dst.cpu().numpy(),
+        #                                                      corr_ind.cpu().numpy(), trans_gt.cpu().numpy(),
+        #                                                      best_trans.cpu().numpy(),
+        #                                                      set(cliques_tensor.cpu().numpy()[idx_best_guess]),
+        #                                                      )
 
         trans_final = RigidTransform(refined_trans)
         return trans_final
