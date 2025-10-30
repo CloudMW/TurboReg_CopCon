@@ -3,6 +3,9 @@ from typing import Literal
 import tyro
 import torch
 from dataclasses import dataclass
+import os
+from pathlib import Path
+import numpy as np
 
 from turboreg_py.demo_py.dataset_3dmatch import TDMatchFCGFAndFPFHDataset
 from turboreg_py.demo_py.utils_pcr import compute_transformation_error, numpy_to_torch32, numpy_to_torchint32
@@ -22,6 +25,10 @@ class Args:
     radiu_nms: float = 0.15
     tau_inlier: float = 0.1
     metric_str: Literal["IN", "MSE", "MAE"] = "IN"
+
+    # Result saving and rerun options
+    out_root: str = "result"  # root folder to save results: <out_root>/<dataset>/<desc>/
+    rerun_errors: bool = False  # if True, only rerun indices listed in error_result.txt
 
 
 from sklearn.neighbors import KDTree  # 需安装 scikit-learn
@@ -48,6 +55,47 @@ def find_keypoint_indices_kdtree(original_points, keypoints, eps=1e-6):
     indices[distances >= eps] = -1  # 无效匹配设为-1
     return indices
 
+
+def _ensure_result_paths(out_root: str, dataset: str, desc: str) -> Path:
+    """Create and return result directory path: out_root/dataset/desc"""
+    path = Path(out_root) / dataset / desc
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _append_result_file(file_path: Path, index: int, rre: float, rte: float, transform: 'np.ndarray') -> None:
+    """Append a single result (5 lines) to file: first line index rre rte, next 4 lines transform matrix rows."""
+    with open(file_path, "a") as f:
+        f.write(f"{index} {rre:.6f} {rte:.6f}\n")
+        # transform is expected shape (4,4)
+        for row in transform:
+            f.write(" ".join([f"{val:.8f}" for val in row]) + "\n")
+
+
+def _read_error_indices(file_path: Path) -> list:
+    """Read error_result.txt and return list of indices (first number of each 5-line block)."""
+    if not file_path.exists():
+        return []
+    indices = []
+    with open(file_path, "r") as f:
+        lines = f.readlines()
+    # parse blocks of 5 lines: more explicit iteration to satisfy static checks
+    for j in range(0, len(lines), 5):
+        header_line = lines[j].strip()
+        if not header_line:
+            continue
+        header = header_line.split()
+        if not header:
+            continue
+        try:
+            idx = int(header[0])
+            indices.append(idx)
+        except Exception:
+            # ignore malformed header
+            continue
+    return indices
+
+
 def main(device):
     args = tyro.cli(Args)
 
@@ -57,6 +105,32 @@ def main(device):
         processed_dataname = "3DLoMatch"
     else:
         raise ValueError(f"Invalid dataname: {args.dataname}. Expected '3DMatch' or '3DLoMatch'.")
+
+    # Prepare result paths
+    result_dir = _ensure_result_paths(args.out_root, processed_dataname, args.desc)
+    all_result_file = result_dir / "all_result.txt"
+    error_result_file = result_dir / "error_result.txt"
+    log_file = result_dir / "log.txt"
+
+    # If this is a normal run (not rerun_errors), clear any previous results so we start fresh
+    if not args.rerun_errors:
+        for p in (all_result_file, error_result_file, log_file):
+            try:
+                if p.exists():
+                    p.unlink()
+            except Exception:
+                # ignore potential race/permission errors here; files will be re-created on write
+                pass
+
+    # If rerun_errors mode is enabled, read indices to run
+    indices_to_run = None
+    if args.rerun_errors:
+        indices_to_run = _read_error_indices(error_result_file)
+        if len(indices_to_run) == 0:
+            print(f"No error indices found in {error_result_file}. Running full dataset instead.")
+            indices_to_run = None
+        else:
+            print(f"Rerun mode: will process {len(indices_to_run)} items from error file.")
 
     # TurboReg
     reger = TurboRegGPU(
@@ -70,19 +144,22 @@ def main(device):
 
     ds = TDMatchFCGFAndFPFHDataset(base_dir=args.dir_dataset, dataset_type=processed_dataname, descriptor_type=args.desc)
 
-    num_succ = 0
-    for i in range(1400,len(ds)):
-        data = ds[i]
+    # run error
 
-        # "corr_kpts_src": corr_kpts_src,
-        # "corr_kpts_dst": corr_kpts_dst,
-        # "trans_gt": trans_gt,
-        # "pts_src": src_cloud,
-        # "pts_dst": dst_cloud,
-        # "kpts_src": kpts_src,
-        # "kpts_dst": kpts_dst,
-        # "corr_ind": corr_ind
-        # kpts_src, kpts_dst, trans_gt ,pts_src,pts_dst= data['kpts_src'], data['kpts_dst'], data['trans_gt'],data['pts_src'],data['pts_dst']
+    num_succ = 0
+    total = 0
+    rr_list = []  # successful RREs
+    re_list = []  # successful RTEs
+
+    # If indices_to_run is provided, iterate only those items (assume they are 0-based indices)
+    if indices_to_run is not None:
+        iterable = indices_to_run
+    else:
+        iterable = range(0, len(ds))
+
+    for loop_i, idx in enumerate(iterable):
+        i = int(idx)
+        data = ds[i]
 
         corr_kpts_src ,corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst,corr_ind = data['corr_kpts_src'], data['corr_kpts_dst'], data['trans_gt'], data['pts_src'], data['pts_dst'], data['kpts_src'], data['kpts_dst'], data['corr_ind']
         # Move keypoints to CUDA device
@@ -90,11 +167,8 @@ def main(device):
             device,  corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst
         )
         [corr_ind] = numpy_to_torchint32(device,corr_ind)
-        # src_ind = find_keypoint_indices_kdtree(pts_src, kpts_src, eps=1e-6)
-        # dst_ind = find_keypoint_indices_kdtree(pts_dst, kpts_dst, eps=1e-6)
 
-        # corr_ind = torch.stack([src_ind, dst_ind], dim=1)  # [M, 2]
-        # Run TurboReg
+       # Run TurboReg
         t1 = time.time()
         trans_pred_torch = reger.run_reg(corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst,corr_ind )
         T_reg = (time.time() - t1) * 1000
@@ -102,33 +176,68 @@ def main(device):
         trans_gt = trans_gt.cpu().numpy()
         rre, rte = compute_transformation_error(trans_gt, trans_pred)
         is_succ = (rre < 15) & (rte < 0.3)
-        if not is_succ:
-            print("Registration failed for item {}/{}: RRE={:.3f}, RTE={:.3f}".format().format(i+1, len(ds), rre, rte))
-        num_succ += is_succ
-        
-        print(f"Processed item {i+1}/{len(ds)}: Registration time: {T_reg:.3f} ms, RR= {(num_succ / (i+1)) * 100:.3f}%")
+
+        # save result: append to all_result
+        if not args.rerun_errors:
+            _append_result_file(all_result_file, i, float(rre), float(rte), trans_pred)
+            if not is_succ:
+                _append_result_file(error_result_file, i, float(rre), float(rte), trans_pred)
+
+        total += 1
+        num_succ += int(is_succ)
+        if is_succ:
+            rr_list.append(float(rre))
+            re_list.append(float(rte))
+        else:
+            print(f"Registration failed for item {i}/{len(ds)-1}: RRE={rre}, RTE={rte}")
+        print(f"Processed item {loop_i+1}/{len(iterable)} (dataset idx {i}): Registration time: {T_reg:.3f} ms, RR= {(num_succ / total) * 100:.3f}%")
+
+    # After processing, write log
+    recall = (num_succ / total) * 100 if total > 0 else 0.0
+    avg_rr = sum(rr_list) / len(rr_list) if len(rr_list) > 0 else 0.0
+    avg_re = sum(re_list) / len(re_list) if len(re_list) > 0 else 0.0
+
+    if not args.rerun_errors:
+        with open(log_file, "w") as f:
+            f.write(f"Total: {total}\n")
+            f.write(f"Successful: {num_succ}\n")
+            f.write(f"Recall(%%): {recall:.3f}\n")
+            f.write(f"Avg_RRE_of_correct: {avg_rr:.6f}\n")
+            f.write(f"Avg_RTE_of_correct: {avg_re:.6f}\n")
+
+        print(f"Done. Results saved in {result_dir}. Recall={recall:.3f}%, Avg_RRE={avg_rr:.6f}, Avg_RTE={avg_re:.6f}")
+    else:
+        # In rerun-errors mode we skip writing any result files
+        print(f"Done. Rerun-errors mode: processed {total} items (no result files written). Recall={recall:.3f}%, Avg_RRE={avg_rr:.6f}, Avg_RTE={avg_re:.6f}")
+
 
 if __name__ == "__main__":
-    import os
     def is_debugging():
-        # 检测常见调试器环境变量
-        debug_env_vars = [
-            "PYDEVD_LOAD_VALUES_ASYNC",  # PyCharm/VS Code 调试器
-            "DEBUGPY_DEBUG_MODE",  # VS Code 调试器
-            "PYCHARM_DEBUG",  # PyCharm 调试器
-        ]
-        return any(var in os.environ for var in debug_env_vars)
+         # 检测常见调试器环境变量
+         debug_env_vars = [
+             "PYDEVD_LOAD_VALUES_ASYNC",  # PyCharm/VS Code 调试器
+             "DEBUGPY_DEBUG_MODE",  # VS Code 调试器
+             "PYCHARM_DEBUG",  # PyCharm 调试器
+         ]
+         return any(var in os.environ for var in debug_env_vars)
 
 
     if torch.cuda.is_available():
         print("CUDA is available. Using GPU for computations.")
         device = torch.device("cuda:0")
-    elif not is_debugging() and torch.xpu.is_available():
-        print("XPU is available. Using XPU for computations.")
-        device = torch.device("xpu:0")
     else:
-        print("CUDA is not available. Using CPU for computations.")
-        device = torch.device("cpu")
+        # If not debugging, try XPU (if present); otherwise fall back to CPU
+        if not is_debugging():
+            xpu = getattr(torch, 'xpu', None)
+            if xpu is not None and xpu.is_available():
+                print("XPU is available. Using XPU for computations.")
+                device = torch.device("xpu:0")
+            else:
+                print("CUDA/XPU not available. Using CPU for computations.")
+                device = torch.device("cpu")
+        else:
+            print("CUDA is not available. Using CPU for computations.")
+            device = torch.device("cpu")
     main(device)
 
 """
