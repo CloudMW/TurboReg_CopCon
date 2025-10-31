@@ -52,32 +52,43 @@ def coplanar_constraint(
 
 
     # Get normals for each clique
-    src_norms = src_normals_tensor[cliques_tensor.view(-1)].view(N, C, 3)  # [N, 3, 3]
-    dst_norms = dst_normals_tensor[cliques_tensor.view(-1)].view(N, C, 3)  # [N, 3, 3]
+    src_norms = src_normals_tensor[cliques_tensor.view(-1)].view(N, C, 3)  # [N, C, 3]
+    dst_norms = dst_normals_tensor[cliques_tensor.view(-1)].view(N, C, 3)  # [N, C, 3]
 
-    # Extract normals for three points
-    src_n0, src_n1, src_n2 = src_norms[:, 0], src_norms[:, 1], src_norms[:, 2]
-    dst_n0, dst_n1, dst_n2 = dst_norms[:, 0], dst_norms[:, 1], dst_norms[:, 2]
+    # Compute pairwise cosine similarities for all C points
+    # src_norms: [N, C, 3], expand to [N, C, 1, 3] and [N, 1, C, 3]
+    src_norms_i = src_norms.unsqueeze(2)  # [N, C, 1, 3]
+    src_norms_j = src_norms.unsqueeze(1)  # [N, 1, C, 3]
 
-    # Cosine similarity absolute value
-    src_sim01 = torch.abs(torch.cosine_similarity(src_n0, src_n1))  # [N]
-    src_sim02 = torch.abs(torch.cosine_similarity(src_n0, src_n2))
-    src_sim12 = torch.abs(torch.cosine_similarity(src_n1, src_n2))
+    # Compute dot product: [N, C, C]
+    src_dot = (src_norms_i * src_norms_j).sum(dim=-1)  # [N, C, C]
 
-    dst_sim01 = torch.abs(torch.cosine_similarity(dst_n0, dst_n1))
-    dst_sim02 = torch.abs(torch.cosine_similarity(dst_n0, dst_n2))
-    dst_sim12 = torch.abs(torch.cosine_similarity(dst_n1, dst_n2))
+    # Same for destination
+    dst_norms_i = dst_norms.unsqueeze(2)  # [N, C, 1, 3]
+    dst_norms_j = dst_norms.unsqueeze(1)  # [N, 1, C, 3]
+    dst_dot = (dst_norms_i * dst_norms_j).sum(dim=-1)  # [N, C, C]
 
-    all_sims = torch.stack([
-        src_sim01, src_sim02, src_sim12,
-        dst_sim01, dst_sim02, dst_sim12
-    ], dim=-1)  # [N, 6]
+    # Take absolute value of cosine similarities
+    src_sim_matrix = torch.abs(src_dot)  # [N, C, C]
+    dst_sim_matrix = torch.abs(dst_dot)  # [N, C, C]
+
+    # Extract upper triangular values (excluding diagonal) for each clique
+    # For C points, we have C*(C-1)/2 unique pairs
+    triu_indices = torch.triu_indices(C, C, offset=1, device=src_norms.device)
+    src_sims = src_sim_matrix[:, triu_indices[0], triu_indices[1]]  # [N, C*(C-1)/2]
+    dst_sims = dst_sim_matrix[:, triu_indices[0], triu_indices[1]]  # [N, C*(C-1)/2]
+
+    # Concatenate all pairwise similarities
+    all_sims = torch.cat([src_sims, dst_sims], dim=-1)  # [N, C*(C-1)]
 
     # Keep cliques with minimum similarity below threshold (match C++)
     min_sims = all_sims.mean(dim=-1)
-    mask = min_sims < threshold
-    filtered_cliques = cliques_tensor[mask]
 
+    score,ind = (-1*min_sims).topk(k=400)
+
+    # mask = min_sims < threshold
+    # filtered_cliques = cliques_tensor[mask]
+    filtered_cliques = cliques_tensor[ind]
     if original_device.type in ['cuda', 'xpu']:
         filtered_cliques = filtered_cliques.to(original_device)
 
