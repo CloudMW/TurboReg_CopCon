@@ -11,9 +11,10 @@ def local_filter(cliques_tensor: torch.Tensor,
                  kpts_src: torch.Tensor,
                  kpts_dst: torch.Tensor,
                  corr_ind: torch.Tensor,
-                 threshold=0.5,
-                 k=20):
-    k_list = [50]
+                 threshold=0.01,
+                 k=20,
+                 num_cliques = 100):
+    k_list = [25,50,100]
     N,_ = cliques_tensor.shape
     neighbor_distances = torch.Tensor(N,0).to(corr_kpts_src.device)
     for i in k_list:
@@ -24,13 +25,13 @@ def local_filter(cliques_tensor: torch.Tensor,
             kpts_src,
             kpts_dst,
             corr_ind,
-            threshold=0.5,
+            threshold=threshold,
             k=i,
         )
         neighbor_distances=torch.concat((neighbor_distances, neighbor_distances_one.unsqueeze(-1)), dim=-1)
 
     neighbor_distances = neighbor_distances.mean(-1)
-    ind = (neighbor_distances).topk(k=min(100,neighbor_distances.shape[0]))[1]
+    ind = (neighbor_distances).topk(k=min(num_cliques,neighbor_distances.shape[0]))[1]
     return cliques_tensor[ind]
 
 def local_filter_(cliques_tensor: torch.Tensor,
@@ -68,7 +69,7 @@ def local_filter_(cliques_tensor: torch.Tensor,
     dst_knn_points = knn_search(corr_kpts_dst_sub, kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_sub.shape[0], 1, 1), k=k)
 
     # 计算src和dst对应邻居点之间的最近距离
-    mae = compute_neighbor_distances(src_knn_points, dst_knn_points).mean(dim=(1, 2)) # [N, 3, k]
+    mae = compute_neighbor_distances(src_knn_points, dst_knn_points,threshold).mean(dim=(1, 2)) # [N, 3, k]
 
     # visualize_knn_neighbors(kpts_src_prime, src_knn_points, corr_kpts_src_sub_transformed)
     # Also visualize source+destination together (if destination info available)
@@ -122,7 +123,7 @@ def knn_search(corr_kpts_src_sub_transformed, kpts_src_prime, k=10):
     return knn_points
 
 
-def compute_neighbor_distances(src_knn_points: torch.Tensor, dst_knn_points: torch.Tensor) -> torch.Tensor:
+def compute_neighbor_distances(src_knn_points: torch.Tensor, dst_knn_points: torch.Tensor,threshold:float) -> torch.Tensor:
     """
     计算src和dst对应关键点的邻居点之间的最近距离
 
@@ -145,7 +146,7 @@ def compute_neighbor_distances(src_knn_points: torch.Tensor, dst_knn_points: tor
 
     # 对于每个src邻居点，找到最近的dst邻居点的距离
     min_distances, _ = torch.min(dist_matrix, dim=-1)  # [N, 3, k]
-    tou = 0.05
+    tou = threshold
     mae =torch.where( min_distances<tou,torch.abs(tou - min_distances)/tou,0)
     return mae
 

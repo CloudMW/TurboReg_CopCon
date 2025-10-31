@@ -174,7 +174,7 @@ class TurboRegGPU:
             kpts_src,
             kpts_dst,
             corr_ind,
-            threshold=0.4
+            threshold=0.5
         )
 
         # local filter
@@ -186,20 +186,21 @@ class TurboRegGPU:
             kpts_src,
             kpts_dst,
             corr_ind,
-            threshold=0.5,
+            threshold=0.1,
             k=20,
+            num_cliques=20
         )
 
-        from turboreg_py.sphere_filter import sphere_filter
-        cliques_tensor = sphere_filter(
-            cliques_tensor,
-            corr_kpts_src,
-            corr_kpts_dst,
-            kpts_src,
-            kpts_dst,
-            corr_ind,
-            k=5,
-        )
+        # from turboreg_py.sphere_filter import sphere_filter
+        # cliques_tensor = sphere_filter(
+        #     cliques_tensor,
+        #     corr_kpts_src,
+        #     corr_kpts_dst,
+        #     kpts_src,
+        #     kpts_dst,
+        #     corr_ind,
+        #     k=10,
+        # )
 
 
         # Verification with metric selection

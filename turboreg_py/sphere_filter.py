@@ -169,14 +169,14 @@ def sphere_filter(cliques_tensor: torch.Tensor,
         # 对于每个src邻居点，找到最近的dst邻居点的距离
         min_distances, _ = torch.min(dist_matrix, dim=-1)  # [N, 3, k]
         tou = 0.05
-        mae = torch.concat((mae,torch.where(min_distances < tou, torch.abs(tou - min_distances) / tou,0).mean().unsqueeze(0)),0)
+        mae = torch.concat((mae,torch.where(min_distances < tou, torch.abs(tou - min_distances) / tou,0).sum().unsqueeze(0)),0)
 
         # visualize_sphere_points(
         #     kpts_src_prime[i],
         #     kpts_dst,
         #     sphere_point_src=sphere_point_src,
         #     sphere_point_dst=sphere_point_dst,point_size=5)
-    ind = (mae).topk(k=min(20,N))[1]
+    ind = (mae).topk(k=min(k,N))[1]
     return cliques_tensor[ind]
 def visualize_sphere_points(
     kpts_src_prime_i,
