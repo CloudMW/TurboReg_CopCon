@@ -82,10 +82,11 @@ def coplanar_constraint(
     all_sims = torch.cat([src_sims, dst_sims], dim=-1)  # [N, C*(C-1)]
 
     # Keep cliques with minimum similarity below threshold (match C++)
-    min_sims = all_sims.mean(dim=-1)
+    # min_sims = all_sims.mean(dim=-1)
 
-    score,ind = (-1*min_sims).topk(k=400)
-
+    # score,ind = (-1*min_sims).topk(k=400)
+    min_sims = (all_sims < 0.3).sum(-1)
+    score, ind = (min_sims).topk(k=100)
     # mask = min_sims < threshold
     # filtered_cliques = cliques_tensor[mask]
     filtered_cliques = cliques_tensor[ind]

@@ -87,7 +87,7 @@ class TurboRegGPU:
         if N_node < corr_kpts_src.size(0):
             corr_kpts_src = corr_kpts_src[:N_node]
             corr_kpts_dst = corr_kpts_dst[:N_node]
-        k_cliques_size = 5
+        k_cliques_size = 10
         # Compute C2 (compatibility matrix)
         src_dist = torch.norm(
             corr_kpts_src.unsqueeze(1) - corr_kpts_src.unsqueeze(0),
