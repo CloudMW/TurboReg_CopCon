@@ -167,15 +167,15 @@ class TurboRegGPU:
         # cliques_tensor[num_pivots:2 * num_pivots, 2] = topk_K2[:, 1]
 
         # Apply coplanar constraint (align with C++ behavior)
-        # cliques_tensor = coplanar_constraint(
-        #     cliques_tensor,
-        #     corr_kpts_src,
-        #     corr_kpts_dst,
-        #     kpts_src,
-        #     kpts_dst,
-        #     corr_ind,
-        #     threshold=0.4
-        # )
+        cliques_tensor = coplanar_constraint(
+            cliques_tensor,
+            corr_kpts_src,
+            corr_kpts_dst,
+            kpts_src,
+            kpts_dst,
+            corr_ind,
+            threshold=0.4
+        )
 
         # local filter
         from turboreg_py.local_filter import local_filter
@@ -187,7 +187,18 @@ class TurboRegGPU:
             kpts_dst,
             corr_ind,
             threshold=0.5,
-            k=100,
+            k=20,
+        )
+
+        from turboreg_py.sphere_filter import sphere_filter
+        cliques_tensor = sphere_filter(
+            cliques_tensor,
+            corr_kpts_src,
+            corr_kpts_dst,
+            kpts_src,
+            kpts_dst,
+            corr_ind,
+            k=5,
         )
 
 

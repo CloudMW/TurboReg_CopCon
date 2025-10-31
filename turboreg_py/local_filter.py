@@ -30,7 +30,7 @@ def local_filter(cliques_tensor: torch.Tensor,
         neighbor_distances=torch.concat((neighbor_distances, neighbor_distances_one.unsqueeze(-1)), dim=-1)
 
     neighbor_distances = neighbor_distances.mean(-1)
-    ind = (neighbor_distances).topk(k=min(20,neighbor_distances.shape[0]))[1]
+    ind = (neighbor_distances).topk(k=min(100,neighbor_distances.shape[0]))[1]
     return cliques_tensor[ind]
 
 def local_filter_(cliques_tensor: torch.Tensor,
@@ -71,7 +71,20 @@ def local_filter_(cliques_tensor: torch.Tensor,
     mae = compute_neighbor_distances(src_knn_points, dst_knn_points).mean(dim=(1, 2)) # [N, 3, k]
 
     # visualize_knn_neighbors(kpts_src_prime, src_knn_points, corr_kpts_src_sub_transformed)
-    # (neighbor_distances)
+    # Also visualize source+destination together (if destination info available)
+    # try:
+    #     vis_kpts_dst = kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_sub.shape[0], 1, 1)
+    # except Exception:
+    #     vis_kpts_dst = None
+    #
+    # visualize_knn_neighbors_src_dst(
+    #     kpts_src_prime,
+    #     src_knn_points,
+    #     corr_kpts_src_sub_transformed,
+    #     vis_kpts_dst,
+    #     dst_knn_points,
+    #     corr_kpts_dst_sub
+    # )
 
 
     return mae
@@ -232,7 +245,8 @@ def visualize_knn_neighbors(
                 print(f"    Keypoint location: {keypoint}")
 
                 # Create a sphere for the keypoint at origin
-                sphere = o3d.geometry.TriangleMesh.create_sphere(radius=keypoint_size * 0.001)
+                sphere = o3d.geometry.TriangleMesh.create_sphere()
+                sphere.scale(keypoint_size * 0.001, center=np.array([0.0, 0.0, 0.0]))
                 sphere.compute_vertex_normals()
                 # Set vertex colors
                 vertices = np.asarray(sphere.vertices)
@@ -255,3 +269,183 @@ def visualize_knn_neighbors(
             height=768,
             point_show_normal=False
         )
+
+
+def visualize_knn_neighbors_src_dst(
+        kpts_src: torch.Tensor,
+        src_knn_points: torch.Tensor,
+        corr_kpts_src_sub_transformed: torch.Tensor = None,
+        kpts_dst: torch.Tensor = None,
+        dst_knn_points: torch.Tensor = None,
+        corr_kpts_dst_sub_transformed: torch.Tensor = None,
+        point_size: float = 2.0,
+        keypoint_size: float = 20.0,
+        neighbor_size: float = 6.0
+):
+    """
+    可视化源和目标点云以及它们的关键点和邻居点（批量，单窗口，按键切换）
+
+    - 键盘控制：N 下一帧，P 上一帧，Q 退出
+    - 使用一个窗口，避免多窗口/阻塞造成的卡死
+    - 主点云通过 RenderOption.point_size 控制大小；关键点/邻居用小球体（可单独控制尺寸）
+    """
+    # Convert tensors to numpy
+    if isinstance(kpts_src, torch.Tensor):
+        kpts_src = kpts_src.cpu().numpy()
+    if isinstance(src_knn_points, torch.Tensor):
+        src_knn_points = src_knn_points.cpu().numpy()
+    if corr_kpts_src_sub_transformed is not None and isinstance(corr_kpts_src_sub_transformed, torch.Tensor):
+        corr_kpts_src_sub_transformed = corr_kpts_src_sub_transformed.cpu().numpy()
+
+    if kpts_dst is not None and isinstance(kpts_dst, torch.Tensor):
+        kpts_dst = kpts_dst.cpu().numpy()
+    if dst_knn_points is not None and isinstance(dst_knn_points, torch.Tensor):
+        dst_knn_points = dst_knn_points.cpu().numpy()
+    if corr_kpts_dst_sub_transformed is not None and isinstance(corr_kpts_dst_sub_transformed, torch.Tensor):
+        corr_kpts_dst_sub_transformed = corr_kpts_dst_sub_transformed.cpu().numpy()
+
+    N = src_knn_points.shape[0]
+
+    # Colors for source keypoints (RGB) and destination keypoints (magenta/cyan/yellow)
+    src_colors = [np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0])]
+    dst_colors = [np.array([1.0, 0.0, 1.0]), np.array([0.0, 1.0, 1.0]), np.array([1.0, 1.0, 0.0])]
+
+    def build_geometries(i: int):
+        geometries = []
+
+        # 收集源中需排除的邻居点（避免重叠）
+        all_neighbor_indices = set()
+        for j in range(3):
+            neighbors = src_knn_points[i, j, :, :].copy()
+            for neighbor in neighbors:
+                distances = np.linalg.norm(kpts_src[i] - neighbor, axis=1)
+                matching = np.where(distances < 1e-6)[0]
+                all_neighbor_indices.update(matching.tolist())
+
+        # 源点云（去重叠）
+        all_idx = set(range(len(kpts_src[i])))
+        src_only_idx = list(all_idx - all_neighbor_indices)
+        if len(src_only_idx) > 0:
+            pcd_src = o3d.geometry.PointCloud()
+            pcd_src.points = o3d.utility.Vector3dVector(kpts_src[i][src_only_idx].copy())
+            colors_src = np.tile([0.7, 0.7, 0.7], (len(src_only_idx), 1)).astype(np.float64)
+            pcd_src.colors = o3d.utility.Vector3dVector(colors_src)
+            geometries.append(pcd_src)
+
+        # 目标点云
+        if kpts_dst is not None and len(kpts_dst) > i:
+            pcd_dst = o3d.geometry.PointCloud()
+            pcd_dst.points = o3d.utility.Vector3dVector(kpts_dst[i].copy())
+            colors_dst = np.tile([0.5, 0.5, 0.9], (len(kpts_dst[i]), 1)).astype(np.float64)
+            pcd_dst.colors = o3d.utility.Vector3dVector(colors_dst)
+            geometries.append(pcd_dst)
+
+        # 源邻居与关键点（球体）
+        for j in range(3):
+            neighbors = src_knn_points[i, j, :, :].copy()
+            color = src_colors[j]
+            for pt in neighbors:
+                sphere = o3d.geometry.TriangleMesh.create_sphere()
+                sphere.scale(neighbor_size * 0.001, center=np.array([0.0, 0.0, 0.0]))
+                sphere.compute_vertex_normals()
+                sphere.paint_uniform_color(color.tolist())
+                T = np.eye(4); T[:3, 3] = pt
+                sphere.transform(T)
+                geometries.append(sphere)
+
+            if corr_kpts_src_sub_transformed is not None:
+                kp = corr_kpts_src_sub_transformed[i, j, :].copy()
+                sphere_k = o3d.geometry.TriangleMesh.create_sphere()
+                sphere_k.scale(keypoint_size * 0.001, center=np.array([0.0, 0.0, 0.0]))
+                sphere_k.compute_vertex_normals()
+                sphere_k.paint_uniform_color(color.tolist())
+                T = np.eye(4); T[:3, 3] = kp
+                sphere_k.transform(T)
+                geometries.append(sphere_k)
+
+        # 目标邻居与关键点（球体）
+        if dst_knn_points is not None:
+            for j in range(3):
+                neighbors = dst_knn_points[i, j, :, :].copy()
+                color = dst_colors[j]
+                for pt in neighbors:
+                    sphere = o3d.geometry.TriangleMesh.create_sphere()
+                    sphere.scale(neighbor_size * 0.001, center=np.array([0.0, 0.0, 0.0]))
+                    sphere.compute_vertex_normals()
+                    sphere.paint_uniform_color(color.tolist())
+                    T = np.eye(4); T[:3, 3] = pt
+                    sphere.transform(T)
+                    geometries.append(sphere)
+
+                if corr_kpts_dst_sub_transformed is not None:
+                    kp = corr_kpts_dst_sub_transformed[i, j, :].copy()
+                    sphere_k = o3d.geometry.TriangleMesh.create_sphere()
+                    sphere_k.scale(keypoint_size * 0.001, center=np.array([0.0, 0.0, 0.0]))
+                    sphere_k.compute_vertex_normals()
+                    sphere_k.paint_uniform_color(color.tolist())
+                    T = np.eye(4); T[:3, 3] = kp
+                    sphere_k.transform(T)
+                    geometries.append(sphere_k)
+
+        return geometries
+
+    # 渲染选项设置
+    def set_render_opts(vis: o3d.visualization.Visualizer):
+        opt = vis.get_render_option()
+        opt.point_size = float(point_size)
+        opt.background_color = np.asarray([0.0, 0.0, 0.0])
+        try:
+            setattr(opt, 'light_on', False)
+        except Exception:
+            pass
+        try:
+            setattr(opt, 'mesh_show_back_face', True)
+        except Exception:
+            pass
+
+    # 状态与回调
+    state = {'idx': 0}
+
+    def show_current(vis):
+        vis.clear_geometries()
+        geoms = build_geometries(state['idx'])
+        for g in geoms:
+            vis.add_geometry(g)
+        set_render_opts(vis)
+        vis.update_renderer()
+        return False
+
+    def cb_next(vis):
+        if state['idx'] < N - 1:
+            state['idx'] += 1
+            print(f"Switch to {state['idx'] + 1}/{N}")
+            return show_current(vis)
+        return False
+
+    def cb_prev(vis):
+        if state['idx'] > 0:
+            state['idx'] -= 1
+            print(f"Switch to {state['idx'] + 1}/{N}")
+            return show_current(vis)
+        return False
+
+    def cb_quit(vis):
+        vis.close()
+        return False
+
+    # 初始几何体 + 键盘回调
+    init_geoms = build_geometries(0)
+    key_callbacks = {
+        ord('N'): cb_next,
+        ord('P'): cb_prev,
+        ord('Q'): cb_quit,
+    }
+    print("Controls: N(next), P(prev), Q(quit)")
+
+    o3d.visualization.draw_geometries_with_key_callbacks(
+        init_geoms,
+        key_callbacks,
+        window_name="KNN neighbors (src+dst)",
+        width=1024,
+        height=768
+    )
