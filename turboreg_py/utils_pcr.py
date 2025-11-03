@@ -23,7 +23,8 @@ def coplanar_constraint(
         kpts_src: torch.Tensor,
         kpts_dst: torch.Tensor,
         corr_ind: torch.Tensor,
-        threshold: float = 0.5
+        threshold: float = 0.5,
+        k=100
 ) -> torch.Tensor:
     """
     Filter cliques based on coplanar constraint using normal vectors
@@ -49,7 +50,13 @@ def coplanar_constraint(
 
     src_normals_tensor = compute_normals_o3d(kpts_src, k_neighbors=10)[corr_ind[:,0]]
     dst_normals_tensor = compute_normals_o3d(kpts_dst, k_neighbors=10)[corr_ind[:,1]]
+    src_norms_all_i = src_normals_tensor.unsqueeze(1)
+    src_norms_all_j = src_normals_tensor.unsqueeze(0)
+    src_dot_all_mean = torch.abs((src_norms_all_i * src_norms_all_j).sum(dim=-1)).mean()  # [N, C, C]
 
+    dst_norms_all_i = dst_normals_tensor.unsqueeze(1)
+    dst_norms_all_j = dst_normals_tensor.unsqueeze(0)
+    dst_dot_all_mean = torch.abs((dst_norms_all_i * dst_norms_all_j).sum(dim=-1)).mean()  # [N, C, C]
 
     # Get normals for each clique
     src_norms = src_normals_tensor[cliques_tensor.view(-1)].view(N, C, 3)  # [N, C, 3]
@@ -85,8 +92,9 @@ def coplanar_constraint(
     # min_sims = all_sims.mean(dim=-1)
 
     # score,ind = (-1*min_sims).topk(k=400)
-    min_sims = (all_sims < 0.3).sum(-1)
-    score, ind = (min_sims).topk(k=100)
+    threshold  = (dst_dot_all_mean+src_dot_all_mean)/2
+    min_sims = torch.where(all_sims < threshold,torch.abs(threshold - all_sims) / threshold,0).sum(-1)
+    score, ind = min_sims.topk(k=k)
     # mask = min_sims < threshold
     # filtered_cliques = cliques_tensor[mask]
     filtered_cliques = cliques_tensor[ind]

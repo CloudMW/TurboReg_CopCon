@@ -46,7 +46,9 @@ class TurboRegGPU:
     def run_reg(
             self,
             corr_kpts_src: torch.Tensor, corr_kpts_dst: torch.Tensor, trans_gt: torch.Tensor, src_cloud: torch.Tensor,
-            dst_cloud: torch.Tensor, kpts_src: torch.Tensor, kpts_dst: torch.Tensor, corr_ind: torch.Tensor
+            dst_cloud: torch.Tensor, kpts_src: torch.Tensor, kpts_dst: torch.Tensor, corr_ind: torch.Tensor,
+            feature_kpts_src:torch.Tensor = None,
+            feature_kpts_dst:torch.Tensor = None,
             # kpts_src: torch.Tensor,
             #     kpts_dst: torch.Tensor,
             #     pts_src: torch.Tensor,
@@ -64,13 +66,15 @@ class TurboRegGPU:
             Transformation matrix [4, 4]
         """
         rigid_transform = self.run_reg_cxx(corr_kpts_src, corr_kpts_dst, trans_gt, src_cloud, dst_cloud, kpts_src,
-                                           kpts_dst, corr_ind)
+                                           kpts_dst, corr_ind,feature_kpts_src = feature_kpts_src, feature_kpts_dst=feature_kpts_dst)
         return rigid_transform.get_transformation()
 
     def run_reg_cxx(
             self,
             corr_kpts_src: torch.Tensor, corr_kpts_dst: torch.Tensor, trans_gt: torch.Tensor, src_cloud: torch.Tensor,
-            dst_cloud: torch.Tensor, kpts_src: torch.Tensor, kpts_dst: torch.Tensor, corr_ind: torch.Tensor
+            dst_cloud: torch.Tensor, kpts_src: torch.Tensor, kpts_dst: torch.Tensor, corr_ind: torch.Tensor,
+            feature_kpts_src: torch.Tensor = None,
+            feature_kpts_dst: torch.Tensor = None,
     ) -> RigidTransform:
         """
         Run registration and return RigidTransform object
@@ -87,7 +91,7 @@ class TurboRegGPU:
         if N_node < corr_kpts_src.size(0):
             corr_kpts_src = corr_kpts_src[:N_node]
             corr_kpts_dst = corr_kpts_dst[:N_node]
-        k_cliques_size = 10
+        k_cliques_size = 3
         # Compute C2 (compatibility matrix)
         src_dist = torch.norm(
             corr_kpts_src.unsqueeze(1) - corr_kpts_src.unsqueeze(0),
@@ -150,7 +154,7 @@ class TurboRegGPU:
         num_pivots = pivots.size(0)
         cliques_tensor = torch.zeros(
             (num_pivots , k_cliques_size),
-            dtype=torch.int32,
+            dtype=torch.long,
             device=corr_kpts_src.device
         )
 
@@ -174,7 +178,8 @@ class TurboRegGPU:
             kpts_src,
             kpts_dst,
             corr_ind,
-            threshold=0.5
+            threshold=0.6,
+            k=200
         )
 
         # local filter
@@ -186,6 +191,8 @@ class TurboRegGPU:
             kpts_src,
             kpts_dst,
             corr_ind,
+            feature_kpts_src = feature_kpts_src,  # Disable feature-based filtering to avoid index bounds issues
+            feature_kpts_dst = feature_kpts_dst,
             threshold=0.1,
             k=20,
             num_cliques=20

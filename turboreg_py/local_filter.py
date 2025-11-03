@@ -11,12 +11,22 @@ def local_filter(cliques_tensor: torch.Tensor,
                  kpts_src: torch.Tensor,
                  kpts_dst: torch.Tensor,
                  corr_ind: torch.Tensor,
+                 feature_kpts_src: torch.Tensor = None,
+                 feature_kpts_dst: torch.Tensor = None,
                  threshold=0.01,
                  k=20,
-                 num_cliques = 100):
-    k_list = [25,50,100]
-    N,_ = cliques_tensor.shape
-    neighbor_distances = torch.Tensor(N,0).to(corr_kpts_src.device)
+                 num_cliques=100):
+    # Sanitize cliques_tensor early: ensure dtype is long and clamp indices to valid range
+    if cliques_tensor.dtype != torch.long:
+        cliques_tensor = cliques_tensor.long()
+
+    num_corr = corr_kpts_src.shape[0]
+    # Clamp all indices to [0, num_corr-1] to avoid out-of-bounds indexing
+    cliques_tensor = torch.clamp(cliques_tensor, min=0, max=num_corr - 1)
+
+    k_list = [100,200]
+    N, _ = cliques_tensor.shape
+    neighbor_distances = torch.Tensor(N, 0).to(corr_kpts_src.device)
     for i in k_list:
         neighbor_distances_one = local_filter_(
             cliques_tensor,
@@ -25,70 +35,229 @@ def local_filter(cliques_tensor: torch.Tensor,
             kpts_src,
             kpts_dst,
             corr_ind,
+            feature_kpts_src=feature_kpts_src,
+            feature_kpts_dst=feature_kpts_dst,
             threshold=threshold,
             k=i,
         )
-        neighbor_distances=torch.concat((neighbor_distances, neighbor_distances_one.unsqueeze(-1)), dim=-1)
+        neighbor_distances = torch.concat((neighbor_distances, neighbor_distances_one.unsqueeze(-1)), dim=-1)
 
     neighbor_distances = neighbor_distances.mean(-1)
-    ind = (neighbor_distances).topk(k=min(num_cliques,neighbor_distances.shape[0]))[1]
+    ind = (neighbor_distances).topk(k=min(num_cliques, neighbor_distances.shape[0]))[1]
     return cliques_tensor[ind]
 
+
 def local_filter_(cliques_tensor: torch.Tensor,
-                 corr_kpts_src: torch.Tensor,
-                 corr_kpts_dst: torch.Tensor,
-                 kpts_src: torch.Tensor,
-                 kpts_dst: torch.Tensor,
-                 corr_ind: torch.Tensor,
-                 threshold=0.5,
-                 k=20):
-    N,C= cliques_tensor.shape
-    corr_kpts_src_sub = corr_kpts_src[cliques_tensor.view(-1)].view(-1, C, 3)  # [C, 3, 3]
-    corr_kpts_dst_sub = corr_kpts_dst[cliques_tensor.view(-1)].view(-1, C, 3)  # [C, 3, 3]
+                  corr_kpts_src: torch.Tensor,
+                  corr_kpts_dst: torch.Tensor,
+                  kpts_src: torch.Tensor,
+                  kpts_dst: torch.Tensor,
+                  corr_ind: torch.Tensor,
+                  feature_kpts_src: torch.Tensor = None,
+                  feature_kpts_dst: torch.Tensor = None,
+                  threshold=0.5,
+                  k=20):
+    N, C = cliques_tensor.shape
 
-    # Compute transformation for each clique
-    cliques_wise_trans = rigid_transform_3d(corr_kpts_src_sub, corr_kpts_dst_sub)  # [C, 4, 4]
+    # Ensure cliques_tensor is long type and on same device (should already be done in local_filter)
+    # if cliques_tensor.dtype != torch.long:
+    #     cliques_tensor = cliques_tensor.long()
+    # if cliques_tensor.device != corr_kpts_src.device:
+    #     cliques_tensor = cliques_tensor.to(corr_kpts_src.device)
 
-    # Apply each transformation to its corresponding point group
-    # Extract rotation and translation from transformation matrices
-    cliques_wise_trans_3x3 = cliques_wise_trans[:, :3, :3]  # [C, 3, 3]
-    cliques_wise_trans_3x1 = cliques_wise_trans[:, :3, 3:4]  # [C, 3, 1]
+    if feature_kpts_dst is None:
 
-    # Transform each point group with its corresponding transformation
-    # corr_kpts_src_sub: [C, 3, 3] -> each group has 3 points
-    # Apply: R @ points.T + t for each group
-    corr_kpts_src_sub_transformed = torch.bmm(cliques_wise_trans_3x3,
-                                              corr_kpts_src_sub.permute(0, 2, 1)) + cliques_wise_trans_3x1  # [C, 3, 3]
-    corr_kpts_src_sub_transformed = corr_kpts_src_sub_transformed.permute(0, 2, 1)  # [C, 3, 3]
+        corr_kpts_src_points = corr_kpts_src[cliques_tensor.view(-1)].view(-1, C, 3)  # [C, 3, 3]
+        corr_kpts_dst_points = corr_kpts_dst[cliques_tensor.view(-1)].view(-1, C, 3)  # [C, 3, 3]
 
-    # Transform source keypoints: R @ kpts_src.T + t
-    kpts_src_prime = torch.einsum('cnm,mk->cnk', cliques_wise_trans_3x3, kpts_src.T) + cliques_wise_trans_3x1
-    kpts_src_prime = kpts_src_prime.permute(0, 2, 1)  # [C, M, 3]
+        # Compute transformation for each clique
+        cliques_wise_trans = rigid_transform_3d(corr_kpts_src_points, corr_kpts_dst_points)  # [C, 4, 4]
 
-    src_knn_points = knn_search(corr_kpts_src_sub_transformed, kpts_src_prime, k=k)  # [C, 3, k, 3]
-    dst_knn_points = knn_search(corr_kpts_dst_sub, kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_sub.shape[0], 1, 1), k=k)
+        # Apply each transformation to its corresponding point group
+        # Extract rotation and translation from transformation matrices
+        cliques_wise_trans_3x3 = cliques_wise_trans[:, :3, :3]  # [C, 3, 3]
+        cliques_wise_trans_3x1 = cliques_wise_trans[:, :3, 3:4]  # [C, 3, 1]
 
-    # 计算src和dst对应邻居点之间的最近距离
-    mae = compute_neighbor_distances(src_knn_points, dst_knn_points,threshold).mean(dim=(1, 2)) # [N, 3, k]
+        # Transform each point group with its corresponding transformation
+        # corr_kpts_src_sub: [C, 3, 3] -> each group has 3 points
+        # Apply: R @ points.T + t for each group
+        cliques_src_points_transformed = torch.bmm(cliques_wise_trans_3x3,
+                                                  corr_kpts_src_points.permute(0, 2,
+                                                                            1)) + cliques_wise_trans_3x1  # [C, 3, 3]
+        cliques_src_points_transformed = cliques_src_points_transformed.permute(0, 2, 1)  # [C, 3, 3]
 
-    # visualize_knn_neighbors(kpts_src_prime, src_knn_points, corr_kpts_src_sub_transformed)
-    # Also visualize source+destination together (if destination info available)
-    # try:
-    #     vis_kpts_dst = kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_sub.shape[0], 1, 1)
-    # except Exception:
-    #     vis_kpts_dst = None
-    #
-    # visualize_knn_neighbors_src_dst(
-    #     kpts_src_prime,
-    #     src_knn_points,
-    #     corr_kpts_src_sub_transformed,
-    #     vis_kpts_dst,
-    #     dst_knn_points,
-    #     corr_kpts_dst_sub
-    # )
+        # Transform source keypoints: R @ kpts_src.T + t
+        kpts_src_transformed = torch.einsum('cnm,mk->cnk', cliques_wise_trans_3x3, kpts_src.T) + cliques_wise_trans_3x1
+        kpts_src_transformed = kpts_src_transformed.permute(0, 2, 1)  # [C, M, 3]
 
+        src_knn_points, _ = knn_search(cliques_src_points_transformed, kpts_src_transformed, k=k)  # [C, 3, k, 3]
+        dst_knn_points, _ = knn_search(corr_kpts_dst_points, kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_points.shape[0], 1, 1), k=k)
+
+        # 计算src和dst对应邻居点之间的最近距离
+        mae = compute_neighbor_distances(src_knn_points, dst_knn_points, threshold).mean(dim=(1, 2))  # [N, 3, k]
+
+        # visualize_knn_neighbors(kpts_src_prime, src_knn_points, corr_kpts_src_sub_transformed)
+        # Also visualize source+destination together (if destination info available)
+        # try:
+        #     vis_kpts_dst = kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_sub.shape[0], 1, 1)
+        # except Exception:
+        #     vis_kpts_dst = None
+        #
+        # visualize_knn_neighbors_src_dst(
+        #     kpts_src_prime,
+        #     src_knn_points,
+        #     corr_kpts_src_sub_transformed,
+        #     vis_kpts_dst,
+        #     dst_knn_points,
+        #     corr_kpts_dst_sub
+        # )
+    else:
+
+        corr_kpts_src_points = corr_kpts_src[cliques_tensor.view(-1)].view(-1, C, 3)  # [C, 3, 3]
+        corr_kpts_dst_points = corr_kpts_dst[cliques_tensor.view(-1)].view(-1, C, 3)  # [C, 3, 3]
+
+        # Compute transformation for each clique
+        cliques_wise_trans = rigid_transform_3d(corr_kpts_src_points, corr_kpts_dst_points)  # [C, 4, 4]
+
+        # Apply each transformation to its corresponding point group
+        # Extract rotation and translation from transformation matrices
+        cliques_wise_trans_3x3 = cliques_wise_trans[:, :3, :3]  # [C, 3, 3]
+        cliques_wise_trans_3x1 = cliques_wise_trans[:, :3, 3:4]  # [C, 3, 1]
+
+        # Transform each point group with its corresponding transformation
+        # corr_kpts_src_sub: [C, 3, 3] -> each group has 3 points
+        # Apply: R @ points.T + t for each group
+        cliques_src_points_transformed = torch.bmm(cliques_wise_trans_3x3,
+                                                  corr_kpts_src_points.permute(0, 2,
+                                                                            1)) + cliques_wise_trans_3x1  # [C, 3, 3]
+        cliques_src_points_transformed = cliques_src_points_transformed.permute(0, 2, 1)  # [C, 3, 3]
+
+        # Transform source keypoints: R @ kpts_src.T + t
+        kpts_src_transformed = torch.einsum('cnm,mk->cnk', cliques_wise_trans_3x3, kpts_src.T) + cliques_wise_trans_3x1
+        kpts_src_transformed = kpts_src_transformed.permute(0, 2, 1)  # [C, M, 3]
+
+        src_knn_points, knn_indices_src = knn_search(cliques_src_points_transformed, kpts_src_transformed, k=k)  # [C, 3, k, 3]
+        dst_knn_points, knn_indices_dst = knn_search(corr_kpts_dst_points,
+                                                     kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_points.shape[0], 1, 1),
+                                                     k=k)
+
+
+        # Extract knn features and compute feature correlation
+        src_cliques_knn_feature = feature_kpts_src[knn_indices_src]
+        dst_cliques_knn_feature = feature_kpts_dst[knn_indices_dst]
+        feature_corr = feature_corr_compute(src_cliques_knn_feature, dst_cliques_knn_feature, knn_indices_src, knn_indices_dst,top_k=k*2)
+        src_indices = feature_corr[..., 0]
+        ref_indices = feature_corr[..., 1]
+
+        src_knn_corr_point =kpts_src_transformed[torch.arange(N).view(N,1,1), src_indices]
+
+
+        dst_knn_corr_point = kpts_dst[ref_indices]
+
+        mae = compute_neighbor_distances(src_knn_corr_point, dst_knn_corr_point, threshold).mean(dim=(1, 2))  # [N, 3, k]
+
+        # feature_corr_scores = feature_corr_compute(src_knn_feature, dst_knn_feature)  # [N, 3]
+        #
+        # # Combine distance-based mae and feature correlation scores
+        # mae_geo = compute_neighbor_distances(src_knn_points, dst_knn_points, threshold).mean(dim=(1, 2))  # [N]
+        # # Use feature correlation as an additional weight/metric (scale to same range as mae)
+        # # feature_corr_scores is [N, 3], average it to [N]
+        # feature_weight = feature_corr_scores.mean(dim=1)  # [N]
+        # mae = mae_geo * (1.0 - feature_weight.clamp(0, 1))  # Emphasize good feature correlation
+
+
+
+        # visualize_knn_neighbors(kpts_src_prime, src_knn_points, corr_kpts_src_sub_transformed)
+        # Also visualize source+destination together (if destination info available)
+        # try:
+        #     vis_kpts_dst = kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_sub.shape[0], 1, 1)
+        # except Exception:
+        #     vis_kpts_dst = None
+        #
+        # visualize_knn_neighbors_src_dst(
+        #     kpts_src_prime,
+        #     src_knn_points,
+        #     corr_kpts_src_sub_transformed,
+        #     vis_kpts_dst,
+        #     dst_knn_points,
+        #     corr_kpts_dst_sub
+        # )
 
     return mae
+
+def feature_corr_compute(src_knn_points: torch.Tensor, dst_knn_points: torch.Tensor,
+                         src_indices: torch.Tensor, ref_indices: torch.Tensor,
+                         top_k: int = 10, dual_normalization: bool = True) -> torch.Tensor:
+    """
+    计算src和dst对应关键点的邻居点之间的特征相关性（批量化实现）
+
+    参数:
+        src_knn_points: 源邻居点特征 [N, 3, k, F]
+        dst_knn_points: 目标邻居点特征 [N, 3, k, F]
+        top_k: 每个(源邻居, 目标邻居)对的展平相似度矩阵中选取的top-k数量（用于聚合）
+        dual_normalization: 是否使用行/列双向归一化（与原始forward逻辑一致）
+
+    返回:
+        max_correlations: [N, 3] - 每个变换/关键点的聚合相似度分数（平均top-k相似度）
+    """
+
+    # src_knn_points: [N,3,k,F]
+    # dst_knn_points: [N,3,k,F]
+    assert src_knn_points.ndim == 4 and dst_knn_points.ndim == 4, "Expect input shape [N,3,k,F]"
+    N, C, k, F = src_knn_points.shape
+    assert dst_knn_points.shape == (N, C, k, F), "src and dst shapes must match"
+
+    device = src_knn_points.device
+    eps = 1e-8
+
+    # Merge batch and keypoint dims to process in one batch: B = N * 3
+    # B = N * C
+    src_flat = src_knn_points  # [B, k, F]
+    dst_flat = dst_knn_points  # [B, k, F]
+
+    # Normalize features to unit vectors for normalized L2 (if vector is zero, eps protects)
+    src_norm = src_flat / (src_flat.norm(p=2, dim=-1, keepdim=True) + eps)
+    dst_norm = dst_flat / (dst_flat.norm(p=2, dim=-1, keepdim=True) + eps)
+
+    # Compute pairwise L2 distances between normalized features: result [B, k, k]
+    # Use broadcasting: (src[:, :, None, :] - dst[:, None, :, :])
+    diff = src_norm.unsqueeze(-2) - dst_norm.unsqueeze(-3)  # [B, k, k, F]
+    dists = torch.sqrt(torch.clamp((diff * diff).sum(dim=-1), min=0.0))  # [B, k, k]
+
+    # Convert distances to similarity scores using exponential kernel (as in forward)
+    matching_scores = torch.exp(-dists)  # [B, k, k]
+
+    if dual_normalization:
+        # Row normalization (sum over destination neighbors)
+        row_sum = matching_scores.sum(dim=-2, keepdim=True)  # [B, k, 1]
+        row_norm = matching_scores / (row_sum + eps)
+        # Column normalization (sum over source neighbors)
+        col_sum = matching_scores.sum(dim=-3, keepdim=True)  # [B, 1, k]
+        col_norm = matching_scores / (col_sum + eps)
+        # Geometric-like combination (here multiply) to enhance symmetry
+        matching_scores = row_norm * col_norm  # [B, k, k]
+
+    # Flatten per (B) to select top-k correspondences
+    flattened = matching_scores.view(N, C, -1)  # [B, k*k]
+    K_select = min(top_k, flattened.shape[-1])
+    top_vals, top_index = flattened.topk(k=K_select, largest=True)
+
+    # Aggregate top-k values (mean) to produce one score per (B)
+    # agg_scores = top_vals.mean(dim=1)  # [B]
+
+    # Reshape back to [N, 3]
+    # max_correlations = agg_scores.view(N, C)  # [N, 3]
+
+    # 将1D索引转换回2D索引
+    ref_sel_indices = top_index // matching_scores.shape[-1]  # (K,) - 参考超点在有效列表中的索引
+    src_sel_indices = top_index % matching_scores.shape[-1]  # (K,) - 源超点在有效列表中的索引
+    # ==================== 步骤6: 恢复原始索引 ====================
+    # 将有效列表中的索引映射回原始超点列表中的索引
+    ref_corr_indices = torch.gather(ref_indices, dim=2, index=ref_sel_indices)  # (K,) - 参考超点在原始列表中的索引
+    src_corr_indices = torch.gather(src_indices, dim=2, index=src_sel_indices)  # (K,) - 源超点在原始列表中的索引
+
+    return  torch.concat([src_corr_indices.unsqueeze(-1), ref_corr_indices.unsqueeze(-1)], dim=-1)
+
 
 
 def knn_search(corr_kpts_src_sub_transformed, kpts_src_prime, k=10):
@@ -120,10 +289,11 @@ def knn_search(corr_kpts_src_sub_transformed, kpts_src_prime, k=10):
 
     # Gather k nearest neighbors: [N, 3, k, 3]
     knn_points = torch.gather(kpts_src_prime_expanded, 2, knn_indices_expanded)  # [N, 3, k, 3]
-    return knn_points
+    return knn_points, knn_indices
 
 
-def compute_neighbor_distances(src_knn_points: torch.Tensor, dst_knn_points: torch.Tensor,threshold:float) -> torch.Tensor:
+def compute_neighbor_distances(src_knn_points: torch.Tensor, dst_knn_points: torch.Tensor,
+                               threshold: float) -> torch.Tensor:
     """
     计算src和dst对应关键点的邻居点之间的最近距离
 
@@ -147,7 +317,7 @@ def compute_neighbor_distances(src_knn_points: torch.Tensor, dst_knn_points: tor
     # 对于每个src邻居点，找到最近的dst邻居点的距离
     min_distances, _ = torch.min(dist_matrix, dim=-1)  # [N, 3, k]
     tou = threshold
-    mae =torch.where( min_distances<tou,torch.abs(tou - min_distances)/tou,0)
+    mae = torch.where(min_distances < tou, torch.abs(tou - min_distances) / tou, 0)
     return mae
 
 
@@ -190,7 +360,7 @@ def visualize_knn_neighbors(
         colors = [
             [1.0, 0.0, 0.0],  # Red for 1st keypoint
             [0.0, 1.0, 0.0],  # Green for 2nd keypoint
-            [0.0, 0.0, 1.0]   # Blue for 3rd keypoint
+            [0.0, 0.0, 1.0]  # Blue for 3rd keypoint
         ]
 
         # Create geometries list for this iteration
@@ -202,7 +372,7 @@ def visualize_knn_neighbors(
         for j in range(3):  # 3 keypoints
             # Create point cloud for neighbors
             neighbors = src_knn_points[i, j, :, :].copy()  # [k, 3]
-            print(f"  Keypoint {j+1} ({['Red', 'Green', 'Blue'][j]}): {len(neighbors)} neighbors")
+            print(f"  Keypoint {j + 1} ({['Red', 'Green', 'Blue'][j]}): {len(neighbors)} neighbors")
             print(f"    Neighbor positions range: min={neighbors.min(axis=0)}, max={neighbors.max(axis=0)}")
 
             # 找到这些邻居点在源点云中的索引
@@ -223,7 +393,8 @@ def visualize_knn_neighbors(
             pcd_src.points = o3d.utility.Vector3dVector(kpts_src[i][src_only_indices].copy())
             pcd_src.colors = o3d.utility.Vector3dVector(np.tile([0.7, 0.7, 0.7], (len(src_only_indices), 1)))
             geometries.append(pcd_src)
-            print(f"  Displaying {len(src_only_indices)} source points (excluded {len(all_neighbor_indices)} neighbor points)")
+            print(
+                f"  Displaying {len(src_only_indices)} source points (excluded {len(all_neighbor_indices)} neighbor points)")
         else:
             print(f"  No source points to display (all are neighbors)")
 
@@ -350,7 +521,8 @@ def visualize_knn_neighbors_src_dst(
                 sphere.scale(neighbor_size * 0.001, center=np.array([0.0, 0.0, 0.0]))
                 sphere.compute_vertex_normals()
                 sphere.paint_uniform_color(color.tolist())
-                T = np.eye(4); T[:3, 3] = pt
+                T = np.eye(4);
+                T[:3, 3] = pt
                 sphere.transform(T)
                 geometries.append(sphere)
 
@@ -360,7 +532,8 @@ def visualize_knn_neighbors_src_dst(
                 sphere_k.scale(keypoint_size * 0.001, center=np.array([0.0, 0.0, 0.0]))
                 sphere_k.compute_vertex_normals()
                 sphere_k.paint_uniform_color(color.tolist())
-                T = np.eye(4); T[:3, 3] = kp
+                T = np.eye(4);
+                T[:3, 3] = kp
                 sphere_k.transform(T)
                 geometries.append(sphere_k)
 
@@ -374,7 +547,8 @@ def visualize_knn_neighbors_src_dst(
                     sphere.scale(neighbor_size * 0.001, center=np.array([0.0, 0.0, 0.0]))
                     sphere.compute_vertex_normals()
                     sphere.paint_uniform_color(color.tolist())
-                    T = np.eye(4); T[:3, 3] = pt
+                    T = np.eye(4);
+                    T[:3, 3] = pt
                     sphere.transform(T)
                     geometries.append(sphere)
 
@@ -384,7 +558,8 @@ def visualize_knn_neighbors_src_dst(
                     sphere_k.scale(keypoint_size * 0.001, center=np.array([0.0, 0.0, 0.0]))
                     sphere_k.compute_vertex_normals()
                     sphere_k.paint_uniform_color(color.tolist())
-                    T = np.eye(4); T[:3, 3] = kp
+                    T = np.eye(4);
+                    T[:3, 3] = kp
                     sphere_k.transform(T)
                     geometries.append(sphere_k)
 

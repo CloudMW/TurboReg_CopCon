@@ -161,16 +161,18 @@ def main(device):
         i = int(idx)
         data = ds[i]
 
-        corr_kpts_src ,corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst,corr_ind = data['corr_kpts_src'], data['corr_kpts_dst'], data['trans_gt'], data['pts_src'], data['pts_dst'], data['kpts_src'], data['kpts_dst'], data['corr_ind']
+        corr_kpts_src ,corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst,corr_ind,feature_kpts_src,feature_kpts_dst =\
+            (data['corr_kpts_src'], data['corr_kpts_dst'], data['trans_gt'],
+             data['pts_src'], data['pts_dst'], data['kpts_src'], data['kpts_dst'], data['corr_ind'],data['feature_kpts_src'],data['feature_kpts_dst'])
         # Move keypoints to CUDA device
-        corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst = numpy_to_torch32(
-            device,  corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst
+        corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst,feature_kpts_src,feature_kpts_dst= numpy_to_torch32(
+            device,  corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst,feature_kpts_src,feature_kpts_dst
         )
         [corr_ind] = numpy_to_torchint32(device,corr_ind)
 
        # Run TurboReg
         t1 = time.time()
-        trans_pred_torch = reger.run_reg(corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst,corr_ind )
+        trans_pred_torch = reger.run_reg(corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst,corr_ind,feature_kpts_src,feature_kpts_dst )
         T_reg = (time.time() - t1) * 1000
         trans_pred = trans_pred_torch.cpu().numpy()
         trans_gt = trans_gt.cpu().numpy()
