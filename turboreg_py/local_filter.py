@@ -24,7 +24,7 @@ def local_filter(cliques_tensor: torch.Tensor,
     # Clamp all indices to [0, num_corr-1] to avoid out-of-bounds indexing
     cliques_tensor = torch.clamp(cliques_tensor, min=0, max=num_corr - 1)
 
-    k_list = [100,200]
+    k_list = [50,100,200]
     N, _ = cliques_tensor.shape
     neighbor_distances = torch.Tensor(N, 0).to(corr_kpts_src.device)
     for i in k_list:
