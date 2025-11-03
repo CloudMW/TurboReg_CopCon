@@ -93,8 +93,9 @@ def coplanar_constraint(
 
     # score,ind = (-1*min_sims).topk(k=400)
     threshold  = (dst_dot_all_mean+src_dot_all_mean)/2
-    min_sims = torch.where(all_sims < threshold,torch.abs(threshold - all_sims) / threshold,0).sum(-1)
-    score, ind = min_sims.topk(k=k)
+    min_sims = torch.where(all_sims < threshold,1,0).sum(-1)
+    big_zero = (min_sims>0).sum()
+    score, ind = min_sims.topk(k=min(k,big_zero))
     # mask = min_sims < threshold
     # filtered_cliques = cliques_tensor[mask]
     filtered_cliques = cliques_tensor[ind]

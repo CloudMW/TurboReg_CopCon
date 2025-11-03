@@ -20,11 +20,11 @@ def local_filter(cliques_tensor: torch.Tensor,
     if cliques_tensor.dtype != torch.long:
         cliques_tensor = cliques_tensor.long()
 
-    num_corr = corr_kpts_src.shape[0]
+    # num_corr = corr_kpts_src.shape[0]
     # Clamp all indices to [0, num_corr-1] to avoid out-of-bounds indexing
-    cliques_tensor = torch.clamp(cliques_tensor, min=0, max=num_corr - 1)
+    # cliques_tensor = torch.clamp(cliques_tensor, min=0, max=num_corr - 1)
 
-    k_list = [50,100,200]
+    k_list = [100]
     N, _ = cliques_tensor.shape
     neighbor_distances = torch.Tensor(N, 0).to(corr_kpts_src.device)
     for i in k_list:
@@ -35,8 +35,8 @@ def local_filter(cliques_tensor: torch.Tensor,
             kpts_src,
             kpts_dst,
             corr_ind,
-            feature_kpts_src=feature_kpts_src,
-            feature_kpts_dst=feature_kpts_dst,
+            feature_kpts_src=None,
+            feature_kpts_dst=None,
             threshold=threshold,
             k=i,
         )
@@ -90,12 +90,32 @@ def local_filter_(cliques_tensor: torch.Tensor,
         kpts_src_transformed = torch.einsum('cnm,mk->cnk', cliques_wise_trans_3x3, kpts_src.T) + cliques_wise_trans_3x1
         kpts_src_transformed = kpts_src_transformed.permute(0, 2, 1)  # [C, M, 3]
 
-        src_knn_points, _ = knn_search(cliques_src_points_transformed, kpts_src_transformed, k=k)  # [C, 3, k, 3]
-        dst_knn_points, _ = knn_search(corr_kpts_dst_points, kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_points.shape[0], 1, 1), k=k)
+        src_knn_points, src_indices = knn_search(cliques_src_points_transformed, kpts_src_transformed, k=k)  # [C, 3, k, 3]
+        dst_knn_points, ref_indices = knn_search(corr_kpts_dst_points, kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_points.shape[0], 1, 1), k=k)
 
         # 计算src和dst对应邻居点之间的最近距离
-        mae = compute_neighbor_distances(src_knn_points, dst_knn_points, threshold).mean(dim=(1, 2))  # [N, 3, k]
+        # mae = compute_neighbor_distances(src_knn_points, dst_knn_points, threshold).mean(dim=(1, 2))  # [N, 3, k]
 
+        mae_dis = compute_neighbor_distances(src_knn_points, dst_knn_points, threshold)  # [N, 3, k]
+
+        src_normals_tensor = compute_normals_o3d(kpts_src, k_neighbors=10)
+        dst_normals_tensor = compute_normals_o3d(kpts_dst, k_neighbors=10)
+        # Transform source keypoints: R @ kpts_src.T + t
+        kpts_src_norm_transformed = torch.einsum('cnm,mk->cnk', cliques_wise_trans_3x3, src_normals_tensor.T)
+        kpts_src_norm_transformed = kpts_src_norm_transformed.permute(0, 2, 1)  # [C, M, 3]
+        src_knn_corr_norm = kpts_src_norm_transformed[torch.arange(N).view(N, 1, 1), src_indices]
+        dst_knn_corr_norm = dst_normals_tensor[ref_indices]
+        norm_diff = torch.abs(torch.cosine_similarity(src_knn_corr_norm, dst_knn_corr_norm, dim=-1))
+
+
+        from turboreg_py.curvature import batch_curvature
+        src_curvatures = batch_curvature(kpts_src.unsqueeze(0), k=30)[0]
+        dst_curvatures = batch_curvature(kpts_dst.unsqueeze(0), k=30)[0]
+        src_knn_corr_curv = src_curvatures[src_indices ]
+        dst_knn_corr_curv = dst_curvatures[ref_indices]
+        curv_diff = torch.abs(src_knn_corr_curv - dst_knn_corr_curv) / (torch.abs(src_knn_corr_curv) + torch.abs(dst_knn_corr_curv) + 1e-8)
+
+        final_mae = ((mae_dis < threshold) * (norm_diff > 0.6) * (curv_diff<0.7)).sum(dim=(1, 2))
         # visualize_knn_neighbors(kpts_src_prime, src_knn_points, corr_kpts_src_sub_transformed)
         # Also visualize source+destination together (if destination info available)
         # try:
@@ -145,7 +165,7 @@ def local_filter_(cliques_tensor: torch.Tensor,
         # Extract knn features and compute feature correlation
         src_cliques_knn_feature = feature_kpts_src[knn_indices_src]
         dst_cliques_knn_feature = feature_kpts_dst[knn_indices_dst]
-        feature_corr = feature_corr_compute(src_cliques_knn_feature, dst_cliques_knn_feature, knn_indices_src, knn_indices_dst,top_k=k*2)
+        feature_corr = feature_corr_compute(src_cliques_knn_feature, dst_cliques_knn_feature, knn_indices_src, knn_indices_dst,top_k=k*5)
         src_indices = feature_corr[..., 0]
         ref_indices = feature_corr[..., 1]
 
@@ -184,6 +204,44 @@ def local_filter_(cliques_tensor: torch.Tensor,
 
 
     return final_mae
+
+def feature_corr_src_to_dst(src_knn_points: torch.Tensor, dst_knn_points: torch.Tensor,) -> torch.Tensor:
+    """
+    计算src和dst对应关键点的邻居点之间的特征相关性（批量化实现）
+
+    参数:
+        src_knn_points: 源邻居点特征 [N, 3, k, F]
+        dst_knn_points: 目标邻居点特征 [N, 3, k, F]
+
+    返回:
+        max_correlations: [N, 3] - 每个变换/关键点的聚合相似度分数（平均top-k相似度）
+    """
+
+    # src_knn_points: [N,3,k,F]
+    # dst_knn_points: [N,3,k,F]
+    assert src_knn_points.ndim == 4 and dst_knn_points.ndim == 4, "Expect input shape [N,3,k,F]"
+    N, C, k, F = src_knn_points.shape
+    assert dst_knn_points.shape == (N, C, k, F), "src and dst shapes must match"
+
+    device = src_knn_points.device
+    eps = 1e-8
+
+    # Merge batch and keypoint dims to process in one batch: B = N * 3
+    # B = N * C
+    src_flat = src_knn_points  # [B, k, F]
+    dst_flat = dst_knn_points  # [B, k, F]
+
+    # Normalize features to unit vectors for normalized L2 (if vector is zero, eps protects)
+    src_norm = src_flat / (src_flat.norm(p=2, dim=-1, keepdim=True) + eps)
+    dst_norm = dst_flat / (dst_flat.norm(p=2, dim=-1, keepdim=True) + eps)
+
+    # Compute pairwise L2 distances between normalized features: result [B, k, k]
+    # Use broadcasting: (src[:, :, None, :] - dst[:, None, :, :])
+    diff = src_norm.unsqueeze(-2) - dst_norm.unsqueeze(-3)  # [B, k, k, F]
+    dists = torch.sqrt(torch.clamp((diff * diff).sum(dim=-1), min=0.0))  # [B, k, k]
+
+    # Convert distances to similarity scores using exponential kernel (as in forward)
+    matching_scores = torch.exp(-dists)  # [B
 
 def feature_corr_compute(src_knn_points: torch.Tensor, dst_knn_points: torch.Tensor,
                          src_indices: torch.Tensor, ref_indices: torch.Tensor,

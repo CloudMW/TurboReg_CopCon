@@ -189,7 +189,7 @@ class TurboRegGPU:
             kpts_dst,
             corr_ind,
             threshold=0.6,
-            k=200
+            k=1500
         )
 
         # local filter
@@ -201,11 +201,11 @@ class TurboRegGPU:
             kpts_src,
             kpts_dst,
             corr_ind,
-            feature_kpts_src = feature_kpts_src,  # Disable feature-based filtering to avoid index bounds issues
-            feature_kpts_dst = feature_kpts_dst,
+            feature_kpts_src = None,  # Disable feature-based filtering to avoid index bounds issues
+            feature_kpts_dst = None,
             threshold=0.05,
             k=20,
-            num_cliques=20
+            num_cliques=100
         )
 
         # from turboreg_py.sphere_filter import sphere_filter
