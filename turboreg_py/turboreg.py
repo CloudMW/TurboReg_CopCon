@@ -203,9 +203,9 @@ class TurboRegGPU:
             corr_ind,
             feature_kpts_src = feature_kpts_src,  # Disable feature-based filtering to avoid index bounds issues
             feature_kpts_dst = feature_kpts_dst,
-            threshold=0.1,
+            threshold=0.05,
             k=20,
-            num_cliques=100
+            num_cliques=20
         )
 
         # from turboreg_py.sphere_filter import sphere_filter

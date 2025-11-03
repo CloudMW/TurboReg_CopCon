@@ -154,36 +154,36 @@ def local_filter_(cliques_tensor: torch.Tensor,
 
         dst_knn_corr_point = kpts_dst[ref_indices]
 
-        mae = compute_neighbor_distances(src_knn_corr_point, dst_knn_corr_point, threshold).mean(dim=(1, 2))  # [N, 3, k]
+        mae_dis = compute_neighbor_distances(src_knn_corr_point, dst_knn_corr_point, threshold)  # [N, 3, k]
 
-        # feature_corr_scores = feature_corr_compute(src_knn_feature, dst_knn_feature)  # [N, 3]
-        #
-        # # Combine distance-based mae and feature correlation scores
-        # mae_geo = compute_neighbor_distances(src_knn_points, dst_knn_points, threshold).mean(dim=(1, 2))  # [N]
-        # # Use feature correlation as an additional weight/metric (scale to same range as mae)
-        # # feature_corr_scores is [N, 3], average it to [N]
-        # feature_weight = feature_corr_scores.mean(dim=1)  # [N]
-        # mae = mae_geo * (1.0 - feature_weight.clamp(0, 1))  # Emphasize good feature correlation
+        src_normals_tensor = compute_normals_o3d(kpts_src, k_neighbors=10)
+        dst_normals_tensor = compute_normals_o3d(kpts_dst, k_neighbors=10)
+        # Transform source keypoints: R @ kpts_src.T + t
+        kpts_src_norm_transformed = torch.einsum('cnm,mk->cnk', cliques_wise_trans_3x3, src_normals_tensor.T)
+        kpts_src_norm_transformed = kpts_src_norm_transformed.permute(0, 2, 1)  # [C, M, 3]
+        src_knn_corr_norm = kpts_src_norm_transformed[torch.arange(N).view(N,1,1), src_indices]
+        dst_knn_corr_norm = dst_normals_tensor[ref_indices]
+        norm_diff = torch.abs(torch.cosine_similarity(src_knn_corr_norm , dst_knn_corr_norm,dim=-1))
+        final_mae = ((mae_dis<threshold )*(norm_diff > 0.4) ).sum(dim=(1,2))
 
-
-
-        # visualize_knn_neighbors(kpts_src_prime, src_knn_points, corr_kpts_src_sub_transformed)
+        # visualize_knn_neighbors(kpts_src_transformed, src_knn_points, cliques_src_points_transformed)
         # Also visualize source+destination together (if destination info available)
         # try:
-        #     vis_kpts_dst = kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_sub.shape[0], 1, 1)
+        #     vis_kpts_dst = kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_points.shape[0], 1, 1)
         # except Exception:
         #     vis_kpts_dst = None
-        #
+
         # visualize_knn_neighbors_src_dst(
-        #     kpts_src_prime,
+        #     kpts_src_transformed,
         #     src_knn_points,
-        #     corr_kpts_src_sub_transformed,
+        #     cliques_src_points_transformed,
         #     vis_kpts_dst,
         #     dst_knn_points,
-        #     corr_kpts_dst_sub
+        #     corr_kpts_dst_points
         # )
 
-    return mae
+
+    return final_mae
 
 def feature_corr_compute(src_knn_points: torch.Tensor, dst_knn_points: torch.Tensor,
                          src_indices: torch.Tensor, ref_indices: torch.Tensor,
@@ -316,9 +316,33 @@ def compute_neighbor_distances(src_knn_points: torch.Tensor, dst_knn_points: tor
 
     # 对于每个src邻居点，找到最近的dst邻居点的距离
     min_distances, _ = torch.min(dist_matrix, dim=-1)  # [N, 3, k]
-    tou = threshold
-    mae = torch.where(min_distances < tou, torch.abs(tou - min_distances) / tou, 0)
-    return mae
+    # tou = threshold
+    # mae = torch.where(min_distances < tou, torch.abs(tou - min_distances) / tou, 0)
+    return min_distances
+
+# def compute_corr_norm_dis (
+#         kpts_src: torch.Tensor,
+#         kpts_dst: torch.Tensor,
+#         threshold: float = 0.5,
+#         ) -> torch.Tensor:
+#
+#     # Get normals for each clique
+#     # src_norms = src_normals_tensor[cliques_tensor.view(-1)].view(N, C, 3)  # [N, C, 3]
+#     # dst_norms = dst_normals_tensor[cliques_tensor.view(-1)].view(N, C, 3)  # [N, C, 3]
+
+
+def compute_normals_o3d(points: torch.Tensor, k_neighbors: int = 10) -> torch.Tensor:
+    """
+    Compute point cloud normals using Open3D (per-point KNN in the same point cloud).
+    Returns unit normals on CPU tensor.
+    """
+    import numpy as np
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points.cpu().numpy())
+    pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1,max_nn=30))
+    normals = torch.from_numpy(np.asarray(pcd.normals)).to(points.device)
+    # normals = normals / (normals.norm(p=2, dim=-1, keepdim=True) + 1e-8)
+    return normals.to(points.dtype)
 
 
 def visualize_knn_neighbors(
