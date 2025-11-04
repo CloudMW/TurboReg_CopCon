@@ -157,6 +157,7 @@ def main(device):
     else:
         iterable = range(0, len(ds))
 
+    t_all = time.time()
     for loop_i, idx in enumerate(iterable):
         i = int(idx)
         data = ds[i]
@@ -199,10 +200,14 @@ def main(device):
             print(f"Registration failed for item {i}/{len(ds)-1}: RRE={rre}, RTE={rte}")
         print(f"Processed item {loop_i+1}/{len(iterable)} (dataset idx {i}): Registration time: {T_reg:.3f} ms, RR= {(num_succ / total) * 100:.3f}%")
 
+    t_all = time.time() - t_all
+
     # After processing, write log
     recall = (num_succ / total) * 100 if total > 0 else 0.0
     avg_rr = sum(rr_list) / len(rr_list) if len(rr_list) > 0 else 0.0
     avg_re = sum(re_list) / len(re_list) if len(re_list) > 0 else 0.0
+
+
 
     if not args.rerun_errors:
         with open(log_file, "w") as f:
@@ -211,8 +216,10 @@ def main(device):
             f.write(f"Recall(%%): {recall:.3f}\n")
             f.write(f"Avg_RRE_of_correct: {avg_rr:.6f}\n")
             f.write(f"Avg_RTE_of_correct: {avg_re:.6f}\n")
+            f.write(f"Total_time_seconds: {t_all:.3f}\n")
 
         print(f"Done. Results saved in {result_dir}. Recall={recall:.3f}%, Avg_RRE={avg_rr:.6f}, Avg_RTE={avg_re:.6f}")
+        print(f"Total time: {t_all:.3f} seconds for {total} items.")
     else:
         # In rerun-errors mode we skip writing any result files
         print(f"Done. Rerun-errors mode: processed {total} items (no result files written). Recall={recall:.3f}%, Avg_RRE={avg_rr:.6f}, Avg_RTE={avg_re:.6f}")

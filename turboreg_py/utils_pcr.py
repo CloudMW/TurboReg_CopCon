@@ -34,7 +34,7 @@ def select_non_coplanar_cliques_ranked(cliques_points_src, M, threshold=1e-3):
     N, C, _ = cliques_points_src.shape
 
     if M > N:
-        raise ValueError(f"M ({M}) 不能大于团的总数 ({N})")
+        M = N
 
     # 计算质心
     centroids = cliques_points_src.mean(dim=1, keepdim=True)  # [N, 1, 3]
