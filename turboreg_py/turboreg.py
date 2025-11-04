@@ -237,9 +237,9 @@ class TurboRegGPU:
             kpts_src,
             kpts_dst,
             corr_ind,
-            feature_kpts_src = None,  # Disable feature-based filtering to avoid index bounds issues
-            feature_kpts_dst = None,
-            threshold=0.05,
+            feature_kpts_src = feature_kpts_src,  # Disable feature-based filtering to avoid index bounds issues
+            feature_kpts_dst = feature_kpts_dst,
+            threshold=0.01,
             k=20,
             num_cliques=20
         )
@@ -277,7 +277,7 @@ class TurboRegGPU:
             inlier_threshold=self.tau_inlier
         )
 
-        vis = False
+        vis = True
         if vis:
             refined_trans_numpy = refined_trans.cpu().numpy()
             trans_gt_numpy = trans_gt.cpu().numpy()
