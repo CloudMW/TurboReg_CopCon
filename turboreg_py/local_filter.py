@@ -24,7 +24,7 @@ def local_filter(cliques_tensor: torch.Tensor,
     # Clamp all indices to [0, num_corr-1] to avoid out-of-bounds indexing
     # cliques_tensor = torch.clamp(cliques_tensor, min=0, max=num_corr - 1)
 
-    k_list = [50,100]
+    k_list = [50]
     N, _ = cliques_tensor.shape
     neighbor_distances = torch.Tensor(N, 0).to(corr_kpts_src.device)
     for i in k_list:
@@ -121,13 +121,17 @@ def local_filter_(cliques_tensor: torch.Tensor,
         cliques_knn_overlap = (mae_dis_src2dst<threshold).sum(-1)+ (mae_dis_dst2_src<threshold).sum(-1)
         legal_cliques = ((cliques_knn_overlap>(k/10)).prod(dim=-1, keepdim=False))
 
-        # final_mae = ((mae_dis_src2dst < threshold) * (norm_diff > 0.6) * (curv_diff<0.7)).sum(dim=(1, 2))*legal_cliques
+
 
         if legal_cliques.sum() ==0:
             # legal_cliques = ((cliques_knn_overlap > (k / 10)).any(dim=-1, keepdim=False))
-            final_mae = (mae_dis_src2dst < threshold).sum(dim=(1, 2))
+            final_mae = ((mae_dis_src2dst < threshold) * (norm_diff > 0.5) * (curv_diff < 0.5)).sum(
+                dim=(1, 2))
+            # final_mae = (mae_dis_src2dst < threshold).sum(dim=(1, 2))
         else:
-            final_mae = (mae_dis_src2dst < threshold).sum(dim=(1, 2)) * legal_cliques
+            final_mae = ((mae_dis_src2dst < threshold) * (norm_diff > 0.5) * (curv_diff < 0.5)).sum(
+                dim=(1, 2)) * legal_cliques
+            # final_mae = (mae_dis_src2dst < threshold).sum(dim=(1, 2)) * legal_cliques
         # visualize_knn_neighbors(kpts_src_transformed, src_knn_points, cliques_src_points_transformed)
         # # Also visualize source+destination together (if destination info available)
 

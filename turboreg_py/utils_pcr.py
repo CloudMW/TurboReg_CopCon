@@ -23,7 +23,7 @@ def coplanar_constraint(
         kpts_src: torch.Tensor,
         kpts_dst: torch.Tensor,
         corr_ind: torch.Tensor,
-        threshold: float = 0.5,
+        plus_threshold: float = 0,
         k=100
 ) -> torch.Tensor:
     """
@@ -92,7 +92,7 @@ def coplanar_constraint(
     # min_sims = all_sims.mean(dim=-1)
 
     # score,ind = (-1*min_sims).topk(k=400)
-    threshold  = (dst_dot_all_mean+src_dot_all_mean)/2
+    threshold  = (dst_dot_all_mean+src_dot_all_mean)/2 + plus_threshold
     min_sims = torch.where(all_sims < threshold,1,0).sum(-1)
     big_zero = (min_sims>0).sum()
     score, ind = min_sims.topk(k=min(k,big_zero))

@@ -146,7 +146,7 @@ class TurboRegGPU:
 
         # Mask the C3 scores
         SC2_C3 = SC2_ADD_C3 * indic_c3_torch.float()
-        cliques_dyn = True
+        cliques_dyn = False
         if cliques_dyn:
             # Get top-2 indices for each row
             topk_K2 = torch.topk(SC2_C3, k=k_cliques_size-2, dim=1)[1]  # [num_pivot, 2]
@@ -192,8 +192,8 @@ class TurboRegGPU:
             kpts_src,
             kpts_dst,
             corr_ind,
-            threshold=0.6,
-            k=200
+            plus_threshold=0.2,
+            k=1000
         )
 
         # local filter
@@ -207,7 +207,7 @@ class TurboRegGPU:
             corr_ind,
             feature_kpts_src = None,  # Disable feature-based filtering to avoid index bounds issues
             feature_kpts_dst = None,
-            threshold=0.01,
+            threshold=0.05,
             k=20,
             num_cliques=50
         )
