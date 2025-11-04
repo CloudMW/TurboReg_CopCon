@@ -146,39 +146,43 @@ class TurboRegGPU:
 
         # Mask the C3 scores
         SC2_C3 = SC2_ADD_C3 * indic_c3_torch.float()
+        cliques_dyn = True
+        if cliques_dyn:
+            # Get top-2 indices for each row
+            topk_K2 = torch.topk(SC2_C3, k=k_cliques_size-2, dim=1)[1]  # [num_pivot, 2]
 
-        # Get top-2 indices for each row
-        # topk_K2 = torch.topk(SC2_C3, k=k_cliques_size-2, dim=1)[1]  # [num_pivot, 2]
+            # Initialize cliques tensor [num_pivot*2, 3]
+            num_pivots = pivots.size(0)
+            cliques_tensor = torch.zeros(
+                (num_pivots , k_cliques_size),
+                dtype=torch.long,
+                device=corr_kpts_src.device
+            )
 
-        # Initialize cliques tensor [num_pivot*2, 3]
-        # num_pivots = pivots.size(0)
-        # cliques_tensor = torch.zeros(
-        #     (num_pivots , k_cliques_size),
-        #     dtype=torch.long,
-        #     device=corr_kpts_src.device
-        # )
-        #
-        # # Upper part
-        # cliques_tensor[:num_pivots, :2] = pivots
-        #
-        # for idx in range(k_cliques_size-2):
-        #     cliques_tensor[:num_pivots, 2 + idx] = topk_K2[:, idx]
+            # Upper part
+            cliques_tensor[:num_pivots, :2] = pivots
 
-        topk_K2 = torch.topk(SC2_C3, k=2, dim=1)[1]
-        # Initialize cliques tensor [num_pivot*2, 3]
-        num_pivots = pivots.size(0)
-        cliques_tensor = torch.zeros(
-            (num_pivots *2,3),
-            dtype=torch.long,
-            device=corr_kpts_src.device
-        )
+            for idx in range(k_cliques_size-2):
+                cliques_tensor[:num_pivots, 2 + idx] = topk_K2[:, idx]
 
-        # Upper part
-        cliques_tensor[:num_pivots, :2] = pivots
-        cliques_tensor[:num_pivots, 2] = topk_K2[:, 0]
-        # Lower part
-        cliques_tensor[num_pivots:, :2] = pivots
-        cliques_tensor[num_pivots:, 2] = topk_K2[:, 1]
+        else:
+
+            topk_K2 = torch.topk(SC2_C3, k=2, dim=1)[1]
+            # Initialize cliques tensor [num_pivot*2, 3]
+
+            num_pivots = pivots.size(0)
+            cliques_tensor = torch.zeros(
+                (num_pivots *2,3),
+                dtype=torch.long,
+                device=corr_kpts_src.device
+            )
+
+            # Upper part
+            cliques_tensor[:num_pivots, :2] = pivots
+            cliques_tensor[:num_pivots, 2] = topk_K2[:, 0]
+            # Lower part
+            cliques_tensor[num_pivots:, :2] = pivots
+            cliques_tensor[num_pivots:, 2] = topk_K2[:, 1]
 
         # Apply coplanar constraint (align with C++ behavior)
         cliques_tensor = coplanar_constraint(
@@ -189,7 +193,7 @@ class TurboRegGPU:
             kpts_dst,
             corr_ind,
             threshold=0.6,
-            k=1500
+            k=200
         )
 
         # local filter
@@ -203,9 +207,9 @@ class TurboRegGPU:
             corr_ind,
             feature_kpts_src = None,  # Disable feature-based filtering to avoid index bounds issues
             feature_kpts_dst = None,
-            threshold=0.05,
+            threshold=0.01,
             k=20,
-            num_cliques=100
+            num_cliques=50
         )
 
         # from turboreg_py.sphere_filter import sphere_filter
@@ -241,20 +245,20 @@ class TurboRegGPU:
             inlier_threshold=self.tau_inlier
         )
 
-
-        # refined_trans_numpy = refined_trans.cpu().numpy()
-        # trans_gt_numpy = trans_gt.cpu().numpy()
-        #
-        # rre, rte =compute_transformation_error(trans_gt_numpy, refined_trans_numpy)
-        # is_succ = (rre < 15) & (rte < 0.3)
-        # if not is_succ:
-        #     import turboreg_py.visualization_debug as vis_debug
-        #     vis_debug.visualization_from_clique_configurable(src_cloud.cpu().numpy(), dst_cloud.cpu().numpy(),
-        #                                                      kpts_src.cpu().numpy(), kpts_dst.cpu().numpy(),
-        #                                                      corr_ind.cpu().numpy(), trans_gt.cpu().numpy(),
-        #                                                      best_trans.cpu().numpy(),
-        #                                                      set(cliques_tensor.cpu().numpy()[idx_best_guess]),
-        #                                                      )
+        vis = False
+        if vis:
+            refined_trans_numpy = refined_trans.cpu().numpy()
+            trans_gt_numpy = trans_gt.cpu().numpy()
+            rre, rte =compute_transformation_error(trans_gt_numpy, refined_trans_numpy)
+            is_succ = (rre < 15) & (rte < 0.3)
+            if not is_succ:
+                import turboreg_py.visualization_debug as vis_debug
+                vis_debug.visualization_from_clique_configurable(src_cloud.cpu().numpy(), dst_cloud.cpu().numpy(),
+                                                                 kpts_src.cpu().numpy(), kpts_dst.cpu().numpy(),
+                                                                 corr_ind.cpu().numpy(), trans_gt.cpu().numpy(),
+                                                                 best_trans.cpu().numpy(),
+                                                                 set(cliques_tensor.cpu().numpy()[idx_best_guess]),
+                                                                 )
 
         trans_final = RigidTransform(refined_trans)
         return trans_final

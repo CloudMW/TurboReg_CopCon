@@ -119,12 +119,16 @@ class TDMatchFCGFAndFPFHDataset:
             pair_info["src_kpts_file"]).points)
         kpts_dst = np.asarray(o3d.io.read_point_cloud(
             pair_info["dst_kpts_file"]).points)
+        if os.path.exists(pair_info["src_npz_file"]) is False:
 
-        src_npz = np.load(pair_info["src_npz_file"])
-        dst_npz = np.load(pair_info["dst_npz_file"])
+            feature_kpts_src = None
+            feature_kpts_dst = None
+        else :
+            src_npz = np.load(pair_info["src_npz_file"])
+            dst_npz = np.load(pair_info["dst_npz_file"])
 
-        feature_kpts_src = src_npz['feature']
-        feature_kpts_dst = dst_npz['feature']
+            feature_kpts_src = src_npz['feature']
+            feature_kpts_dst = dst_npz['feature']
         return {
             "corr_kpts_src": corr_kpts_src,
             "corr_kpts_dst": corr_kpts_dst,

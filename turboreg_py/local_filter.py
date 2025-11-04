@@ -24,7 +24,7 @@ def local_filter(cliques_tensor: torch.Tensor,
     # Clamp all indices to [0, num_corr-1] to avoid out-of-bounds indexing
     # cliques_tensor = torch.clamp(cliques_tensor, min=0, max=num_corr - 1)
 
-    k_list = [100]
+    k_list = [50,100]
     N, _ = cliques_tensor.shape
     neighbor_distances = torch.Tensor(N, 0).to(corr_kpts_src.device)
     for i in k_list:
@@ -43,7 +43,9 @@ def local_filter(cliques_tensor: torch.Tensor,
         neighbor_distances = torch.concat((neighbor_distances, neighbor_distances_one.unsqueeze(-1)), dim=-1)
 
     neighbor_distances = neighbor_distances.mean(-1)
-    ind = (neighbor_distances).topk(k=min(num_cliques, neighbor_distances.shape[0]))[1]
+    big_zero = (neighbor_distances > 0).sum()
+
+    ind = (neighbor_distances).topk(k=min(num_cliques,big_zero.item()))[1]
     return cliques_tensor[ind]
 
 
@@ -96,7 +98,8 @@ def local_filter_(cliques_tensor: torch.Tensor,
         # 计算src和dst对应邻居点之间的最近距离
         # mae = compute_neighbor_distances(src_knn_points, dst_knn_points, threshold).mean(dim=(1, 2))  # [N, 3, k]
 
-        mae_dis = compute_neighbor_distances(src_knn_points, dst_knn_points, threshold)  # [N, 3, k]
+        mae_dis_src2dst, mae_dis_dst2_src = compute_neighbor_distances(src_knn_points, dst_knn_points,
+                                                                       threshold)  # [N, 3, k]
 
         src_normals_tensor = compute_normals_o3d(kpts_src, k_neighbors=10)
         dst_normals_tensor = compute_normals_o3d(kpts_dst, k_neighbors=10)
@@ -115,22 +118,39 @@ def local_filter_(cliques_tensor: torch.Tensor,
         dst_knn_corr_curv = dst_curvatures[ref_indices]
         curv_diff = torch.abs(src_knn_corr_curv - dst_knn_corr_curv) / (torch.abs(src_knn_corr_curv) + torch.abs(dst_knn_corr_curv) + 1e-8)
 
-        final_mae = ((mae_dis < threshold) * (norm_diff > 0.6) * (curv_diff<0.7)).sum(dim=(1, 2))
-        # visualize_knn_neighbors(kpts_src_prime, src_knn_points, corr_kpts_src_sub_transformed)
-        # Also visualize source+destination together (if destination info available)
-        # try:
-        #     vis_kpts_dst = kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_sub.shape[0], 1, 1)
-        # except Exception:
-        #     vis_kpts_dst = None
-        #
-        # visualize_knn_neighbors_src_dst(
-        #     kpts_src_prime,
-        #     src_knn_points,
-        #     corr_kpts_src_sub_transformed,
-        #     vis_kpts_dst,
-        #     dst_knn_points,
-        #     corr_kpts_dst_sub
-        # )
+        cliques_knn_overlap = (mae_dis_src2dst<threshold).sum(-1)+ (mae_dis_dst2_src<threshold).sum(-1)
+        legal_cliques = ((cliques_knn_overlap>(k/10)).prod(dim=-1, keepdim=False))
+
+        # final_mae = ((mae_dis_src2dst < threshold) * (norm_diff > 0.6) * (curv_diff<0.7)).sum(dim=(1, 2))*legal_cliques
+
+        if legal_cliques.sum() ==0:
+            # legal_cliques = ((cliques_knn_overlap > (k / 10)).any(dim=-1, keepdim=False))
+            final_mae = (mae_dis_src2dst < threshold).sum(dim=(1, 2))
+        else:
+            final_mae = (mae_dis_src2dst < threshold).sum(dim=(1, 2)) * legal_cliques
+        # visualize_knn_neighbors(kpts_src_transformed, src_knn_points, cliques_src_points_transformed)
+        # # Also visualize source+destination together (if destination info available)
+
+
+        big_zero = (final_mae > 0).sum()
+        ind = (final_mae).topk(k=min(20, big_zero.item()))[1]
+        vis = False
+
+        if vis:
+            try:
+                vis_kpts_dst = kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_points.shape[0], 1, 1)
+            except Exception:
+                vis_kpts_dst = None
+
+            visualize_knn_neighbors_src_dst(
+                kpts_src_transformed[ind],
+                src_knn_points[ind],
+                cliques_src_points_transformed[ind],
+                vis_kpts_dst[ind],
+                dst_knn_points[ind],
+                corr_kpts_dst_points[ind],
+                final_mae=(mae_dis_src2dst < threshold).sum(-1)[ind]
+            )
     else:
 
         corr_kpts_src_points = corr_kpts_src[cliques_tensor.view(-1)].view(-1, C, 3)  # [C, 3, 3]
@@ -174,7 +194,7 @@ def local_filter_(cliques_tensor: torch.Tensor,
 
         dst_knn_corr_point = kpts_dst[ref_indices]
 
-        mae_dis = compute_neighbor_distances(src_knn_corr_point, dst_knn_corr_point, threshold)  # [N, 3, k]
+        mae_dis_src2dst,mae_dis_dst2_src = compute_neighbor_distances(src_knn_corr_point, dst_knn_corr_point, threshold)  # [N, 3, k]
 
         src_normals_tensor = compute_normals_o3d(kpts_src, k_neighbors=10)
         dst_normals_tensor = compute_normals_o3d(kpts_dst, k_neighbors=10)
@@ -184,7 +204,10 @@ def local_filter_(cliques_tensor: torch.Tensor,
         src_knn_corr_norm = kpts_src_norm_transformed[torch.arange(N).view(N,1,1), src_indices]
         dst_knn_corr_norm = dst_normals_tensor[ref_indices]
         norm_diff = torch.abs(torch.cosine_similarity(src_knn_corr_norm , dst_knn_corr_norm,dim=-1))
-        final_mae = ((mae_dis<threshold )*(norm_diff > 0.4) ).sum(dim=(1,2))
+
+        (mae_dis_src2dst<threshold) + (dst_normals_tensor<threshold)
+
+        final_mae = ((mae_dis_src2dst<threshold )*(norm_diff > 0.4) ).sum(dim=(1,2))
 
         # visualize_knn_neighbors(kpts_src_transformed, src_knn_points, cliques_src_points_transformed)
         # Also visualize source+destination together (if destination info available)
@@ -374,9 +397,20 @@ def compute_neighbor_distances(src_knn_points: torch.Tensor, dst_knn_points: tor
 
     # 对于每个src邻居点，找到最近的dst邻居点的距离
     min_distances, _ = torch.min(dist_matrix, dim=-1)  # [N, 3, k]
+
+
+    src_expanded_dst2src = src_knn_points.unsqueeze(2)  # [N, 3, k, 1, 3]
+    dst_expanded_dst2src = dst_knn_points.unsqueeze(3)  # [N, 3, 1, k, 3]
+
+    # 计算所有src和dst邻居点对之间的距离
+    # 广播后得到 [N, 3, k, k, 3]
+    dist_matrix_dst2src = torch.sqrt(torch.sum((dst_expanded_dst2src - src_expanded_dst2src) ** 2, dim=-1))  # [N, 3, k, k]
+
+    # 对于每个src邻居点，找到最近的dst邻居点的距离
+    min_distances_dst2src, _ = torch.min(dist_matrix_dst2src, dim=-1)  # [N, 3, k]
     # tou = threshold
     # mae = torch.where(min_distances < tou, torch.abs(tou - min_distances) / tou, 0)
-    return min_distances
+    return min_distances, min_distances_dst2src
 
 # def compute_corr_norm_dis (
 #         kpts_src: torch.Tensor,
@@ -534,7 +568,8 @@ def visualize_knn_neighbors_src_dst(
         corr_kpts_dst_sub_transformed: torch.Tensor = None,
         point_size: float = 2.0,
         keypoint_size: float = 20.0,
-        neighbor_size: float = 6.0
+        neighbor_size: float = 6.0,
+        final_mae=None
 ):
     """
     可视化源和目标点云以及它们的关键点和邻居点（批量，单窗口，按键切换）
@@ -565,6 +600,9 @@ def visualize_knn_neighbors_src_dst(
     dst_colors = [np.array([1.0, 0.0, 1.0]), np.array([0.0, 1.0, 1.0]), np.array([1.0, 1.0, 0.0])]
 
     def build_geometries(i: int):
+        if (final_mae is not None):
+            print(f"\n=== Visualization for Transformation {i + 1}/{N} | Final MAE: {final_mae[i]} ===")
+
         geometries = []
 
         # 收集源中需排除的邻居点（避免重叠）
@@ -666,6 +704,7 @@ def visualize_knn_neighbors_src_dst(
 
     def show_current(vis):
         vis.clear_geometries()
+
         geoms = build_geometries(state['idx'])
         for g in geoms:
             vis.add_geometry(g)

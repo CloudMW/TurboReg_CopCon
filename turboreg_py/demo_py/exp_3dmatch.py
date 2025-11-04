@@ -165,9 +165,14 @@ def main(device):
             (data['corr_kpts_src'], data['corr_kpts_dst'], data['trans_gt'],
              data['pts_src'], data['pts_dst'], data['kpts_src'], data['kpts_dst'], data['corr_ind'],data['feature_kpts_src'],data['feature_kpts_dst'])
         # Move keypoints to CUDA device
-        corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst,feature_kpts_src,feature_kpts_dst= numpy_to_torch32(
-            device,  corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst,feature_kpts_src,feature_kpts_dst
-        )
+        if feature_kpts_src is None:
+            corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst= numpy_to_torch32(
+                device,  corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst
+            )
+        else :
+            corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst,feature_kpts_src,feature_kpts_dst= numpy_to_torch32(
+                device,  corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst,feature_kpts_src,feature_kpts_dst
+            )
         [corr_ind] = numpy_to_torchint32(device,corr_ind)
 
        # Run TurboReg
