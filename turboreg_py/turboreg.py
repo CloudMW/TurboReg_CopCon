@@ -7,7 +7,7 @@ import torch
 from .model_selection import ModelSelection, string_to_metric_type
 from .rigid_transform import RigidTransform
 from .core_turboreg import verification_v2_metric, post_refinement
-from .utils_pcr import coplanar_constraint
+from .utils_pcr import coplanar_constraint, coplanar_constraint_more_points
 from turboreg_py.demo_py.utils_pcr import *
 class TurboRegGPU:
     """
@@ -91,7 +91,7 @@ class TurboRegGPU:
         if N_node < corr_kpts_src.size(0):
             corr_kpts_src = corr_kpts_src[:N_node]
             corr_kpts_dst = corr_kpts_dst[:N_node]
-        k_cliques_size = 3
+        k_cliques_size = 5
         # Compute C2 (compatibility matrix)
         src_dist = torch.norm(
             corr_kpts_src.unsqueeze(1) - corr_kpts_src.unsqueeze(0),
@@ -146,7 +146,7 @@ class TurboRegGPU:
 
         # Mask the C3 scores
         SC2_C3 = SC2_ADD_C3 * indic_c3_torch.float()
-        cliques_dyn = False
+        cliques_dyn = True
         if cliques_dyn:
             # Get top-2 indices for each row
             topk_K2 = torch.topk(SC2_C3, k=k_cliques_size-2, dim=1)[1]  # [num_pivot, 2]
@@ -185,32 +185,32 @@ class TurboRegGPU:
             cliques_tensor[num_pivots:, 2] = topk_K2[:, 1]
 
         # Apply coplanar constraint (align with C++ behavior)
-        cliques_tensor = coplanar_constraint(
+        cliques_tensor = coplanar_constraint_more_points(
             cliques_tensor,
             corr_kpts_src,
             corr_kpts_dst,
             kpts_src,
             kpts_dst,
             corr_ind,
-            plus_threshold=0.2,
-            k=1000
+
+            k=100
         )
 
         # local filter
-        from turboreg_py.local_filter import local_filter
-        cliques_tensor = local_filter(
-            cliques_tensor,
-            corr_kpts_src,
-            corr_kpts_dst,
-            kpts_src,
-            kpts_dst,
-            corr_ind,
-            feature_kpts_src = None,  # Disable feature-based filtering to avoid index bounds issues
-            feature_kpts_dst = None,
-            threshold=0.05,
-            k=20,
-            num_cliques=50
-        )
+        # from turboreg_py.local_filter import local_filter
+        # cliques_tensor = local_filter(
+        #     cliques_tensor,
+        #     corr_kpts_src,
+        #     corr_kpts_dst,
+        #     kpts_src,
+        #     kpts_dst,
+        #     corr_ind,
+        #     feature_kpts_src = None,  # Disable feature-based filtering to avoid index bounds issues
+        #     feature_kpts_dst = None,
+        #     threshold=0.05,
+        #     k=20,
+        #     num_cliques=10
+        # )
 
         # from turboreg_py.sphere_filter import sphere_filter
         # cliques_tensor = sphere_filter(
@@ -245,7 +245,7 @@ class TurboRegGPU:
             inlier_threshold=self.tau_inlier
         )
 
-        vis = False
+        vis = True
         if vis:
             refined_trans_numpy = refined_trans.cpu().numpy()
             trans_gt_numpy = trans_gt.cpu().numpy()

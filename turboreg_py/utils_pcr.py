@@ -16,6 +16,81 @@ except ImportError:
     print("Warning: Open3D not found. Falling back to PyTorch k-NN normal estimation.")
 
 
+def select_non_coplanar_cliques_ranked(cliques_points_src, M, threshold=1e-3):
+    """
+    从N个团中挑选M个不共面的团，按"不共面程度"排序
+    （最小奇异值越大，表示越不共面）
+
+    Args:
+        cliques_points_src: [N, C, 3] tensor
+        M: 要挑选的团数量
+        threshold: 共面判断阈值
+
+    Returns:
+        selected_indices: list，挑选出的团的索引
+        selected_cliques: [M, C, 3] 挑选出的团
+        singular_values: 对应的最小奇异值
+    """
+    N, C, _ = cliques_points_src.shape
+
+    if M > N:
+        raise ValueError(f"M ({M}) 不能大于团的总数 ({N})")
+
+    # 计算质心
+    centroids = cliques_points_src.mean(dim=1, keepdim=True)  # [N, 1, 3]
+
+    # 中心化
+    centered = cliques_points_src - centroids  # [N, C, 3]
+
+    # 批量SVD
+    U, S, Vh = torch.linalg.svd(centered, full_matrices=False)
+
+    # 获取每个团的最小奇异值
+    min_singular_values = S[:, -1]  # [N]
+
+    # 找到不共面的团（最小奇异值 >= threshold）
+    non_coplanar_mask = min_singular_values >= threshold
+    non_coplanar_indices = torch.where(non_coplanar_mask)[0]
+    non_coplanar_values = min_singular_values[non_coplanar_indices]
+
+    num_non_coplanar = len(non_coplanar_indices)
+
+    if num_non_coplanar < M:
+        print(f"警告：只有 {num_non_coplanar} 个不共面的团，少于要求的 {M} 个")
+        print(f"将返回所有 {num_non_coplanar} 个不共面的团")
+        # 按最小奇异值降序排序
+        sorted_indices = torch.argsort(non_coplanar_values, descending=True)
+        selected_local_indices = sorted_indices
+    else:
+        # 选择最小奇异值最大的M个团（最不共面的）
+        sorted_indices = torch.argsort(non_coplanar_values, descending=True)
+        selected_local_indices = sorted_indices[:M]
+
+    selected_indices = non_coplanar_indices[selected_local_indices].tolist()
+    selected_singular_values = non_coplanar_values[selected_local_indices]
+    selected_cliques = cliques_points_src[selected_indices]
+
+    return selected_indices, selected_cliques, selected_singular_values.tolist()
+
+
+def coplanar_constraint_more_points(
+        cliques_tensor: torch.Tensor,
+        corr_kpts_src: torch.Tensor,
+        corr_kpts_dst: torch.Tensor,
+        kpts_src: torch.Tensor,
+        kpts_dst: torch.Tensor,
+        corr_ind: torch.Tensor,
+        plus_threshold: float = 0,
+        k=100
+) -> torch.Tensor:
+    N,C = cliques_tensor.shape
+
+    cliques_points_src = corr_kpts_src[cliques_tensor.view(-1)].view(-1,C, 3)
+    cliques_points_dst = corr_kpts_dst[cliques_tensor.view(-1)].view(-1, C, 3)
+    selected_index  ,_,_ = select_non_coplanar_cliques_ranked(cliques_points_src, k, threshold=1e-3)
+    cliques_tensor = cliques_tensor[selected_index]
+    return  cliques_tensor
+
 def coplanar_constraint(
         cliques_tensor: torch.Tensor,
         corr_kpts_src: torch.Tensor,
