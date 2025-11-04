@@ -24,7 +24,7 @@ def local_filter(cliques_tensor: torch.Tensor,
     # Clamp all indices to [0, num_corr-1] to avoid out-of-bounds indexing
     # cliques_tensor = torch.clamp(cliques_tensor, min=0, max=num_corr - 1)
 
-    k_list = [50]
+    k_list = [100]
     N, _ = cliques_tensor.shape
     neighbor_distances = torch.Tensor(N, 0).to(corr_kpts_src.device)
     for i in k_list:
@@ -57,7 +57,7 @@ def local_filter_(cliques_tensor: torch.Tensor,
                   corr_ind: torch.Tensor,
                   feature_kpts_src: torch.Tensor = None,
                   feature_kpts_dst: torch.Tensor = None,
-                  threshold=0.5,
+                  threshold=0.1,
                   k=20):
     N, C = cliques_tensor.shape
 
@@ -119,19 +119,20 @@ def local_filter_(cliques_tensor: torch.Tensor,
         curv_diff = torch.abs(src_knn_corr_curv - dst_knn_corr_curv) / (torch.abs(src_knn_corr_curv) + torch.abs(dst_knn_corr_curv) + 1e-8)
 
         cliques_knn_overlap = (mae_dis_src2dst<threshold).sum(-1)+ (mae_dis_dst2_src<threshold).sum(-1)
-        legal_cliques = ((cliques_knn_overlap>(k/10)).prod(dim=-1, keepdim=False))
+        legal_cliques = ((cliques_knn_overlap>(k/4)).prod(dim=-1, keepdim=False))
 
 
 
         if legal_cliques.sum() ==0:
             # legal_cliques = ((cliques_knn_overlap > (k / 10)).any(dim=-1, keepdim=False))
-            final_mae = ((mae_dis_src2dst < threshold) * (norm_diff > 0.5) * (curv_diff < 0.5)).sum(
-                dim=(1, 2))
-            # final_mae = (mae_dis_src2dst < threshold).sum(dim=(1, 2))
+            # final_mae = ((mae_dis_src2dst < threshold) * (norm_diff > 0.5) * (curv_diff < 0.5)).sum(
+            #     dim=(1, 2))
+            print("legal_cliques .sum ==0")
+            final_mae = (mae_dis_src2dst < threshold).sum(dim=(1, 2))
         else:
-            final_mae = ((mae_dis_src2dst < threshold) * (norm_diff > 0.5) * (curv_diff < 0.5)).sum(
-                dim=(1, 2)) * legal_cliques
-            # final_mae = (mae_dis_src2dst < threshold).sum(dim=(1, 2)) * legal_cliques
+            # final_mae = ((mae_dis_src2dst < threshold) * (norm_diff > 0.5) * (curv_diff < 0.5)).sum(
+            #     dim=(1, 2)) * legal_cliques
+            final_mae = (mae_dis_src2dst < threshold).sum(dim=(1, 2)) * legal_cliques
         # visualize_knn_neighbors(kpts_src_transformed, src_knn_points, cliques_src_points_transformed)
         # # Also visualize source+destination together (if destination info available)
 

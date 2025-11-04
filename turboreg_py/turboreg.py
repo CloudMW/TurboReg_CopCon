@@ -91,7 +91,7 @@ class TurboRegGPU:
         if N_node < corr_kpts_src.size(0):
             corr_kpts_src = corr_kpts_src[:N_node]
             corr_kpts_dst = corr_kpts_dst[:N_node]
-        k_cliques_size = 5
+        k_cliques_size = 4
         # Compute C2 (compatibility matrix)
         src_dist = torch.norm(
             corr_kpts_src.unsqueeze(1) - corr_kpts_src.unsqueeze(0),
@@ -117,74 +117,107 @@ class TurboRegGPU:
         # Align with C++: SC2 = (C2 @ C2) * C2 (Hadamard product with C2)
         SC2 = torch.matmul(C2, C2) * C2
 
-        # Select pivots
-        SC2_up = torch.triu(SC2, diagonal=1)  # Upper triangular
-        flat_SC2_up = SC2_up.flatten()
-        scores_topk, idx_topk = torch.topk(flat_SC2_up, self.num_pivot)
+        from turboreg_py.find_cliques import find_maximal_cliques_dynamic_robust,filter_valid_cliques
 
-        # Convert flat indices to 2D indices
-        pivots = torch.stack([
-            (idx_topk // N_node).long(),
-            (idx_topk % N_node).long()
-        ], dim=1)  # [num_pivot, 2]
+        # 找团
+        cliques, valid_sizes = find_maximal_cliques_dynamic_robust(SC2,self.num_pivot,k_cliques_size,corr_kpts_src.device)
 
-        # Find 3-cliques
-        SC2_for_search = SC2_up.clone()
+        # print(f"找到的团: {cliques.shape}")
+        # print(f"每个团的实际大小: {valid_sizes}")
+        # print(f"\n团大小统计:")
+        # for size in range(2, k_cliques_size + 1):
+        #     count = (valid_sizes == size).sum().item()
+        #     if count > 0:
+        #         print(f"  大小为 {size} 的团: {count} 个")
 
-        SC2_pivot_0 = SC2_for_search[pivots[:, 0]] > 0  # [num_pivot, N]
-        SC2_pivot_1 = SC2_for_search[pivots[:, 1]] > 0  # [num_pivot, N]
-        indic_c3_torch = SC2_pivot_0 & SC2_pivot_1  # [num_pivot, N]
+        # 过滤有效团
+        valid_cliques_list, valid_sizes_list = filter_valid_cliques(cliques, valid_sizes, min_size=k_cliques_size)
+        print(f"\n大小为 {k_cliques_size} 的完整团数量: {len(valid_cliques_list)}")
+        ##Select pivots
+        # SC2_up = torch.triu(SC2, diagonal=1)  # Upper triangular
+        # flat_SC2_up = SC2_up.flatten()
+        # scores_topk, idx_topk = torch.topk(flat_SC2_up, self.num_pivot)
+        #
+        # # Convert flat indices to 2D indices
+        # pivots = torch.stack([
+        #     (idx_topk // N_node).long(),
+        #     (idx_topk % N_node).long()
+        # ], dim=1)  # [num_pivot, 2]
+        #
+        # # Find 3-cliques
+        # SC2_for_search = SC2_up.clone()
+        #
+        # SC2_pivot_0 = SC2_for_search[pivots[:, 0]] > 0  # [num_pivot, N]
+        # SC2_pivot_1 = SC2_for_search[pivots[:, 1]] > 0  # [num_pivot, N]
+        # indic_c3_torch = SC2_pivot_0 & SC2_pivot_1  # [num_pivot, N]
+        #
+        # SC2_pivots = SC2_for_search[pivots[:, 0], pivots[:, 1]]  # [num_pivot]
+        #
+        # # Calculate scores for each 3-clique
+        # SC2_ADD_C3 = (
+        #         SC2_pivots.unsqueeze(1) +
+        #         SC2_for_search[pivots[:, 0]] +
+        #         SC2_for_search[pivots[:, 1]]
+        # )  # [num_pivot, N]
+        #
+        # # Mask the C3 scores
+        # SC2_C3 = SC2_ADD_C3 * indic_c3_torch.float()
+        #
+        # topk_K2 = torch.topk(SC2_C3, k=1, dim=1)[1]
+        # # Initialize cliques tensor [num_pivot*2, 3]
+        #
+        # num_pivots = pivots.size(0)
+        # cliques_tensor = torch.zeros(
+        #     (num_pivots , 3),
+        #     dtype=torch.long,
+        #     device=corr_kpts_src.device
+        # )
+        #
+        # cliques_tensor[:, :2] = pivots
+        # cliques_tensor[:, 2] = topk_K2[:, 0]
 
-        SC2_pivots = SC2_for_search[pivots[:, 0], pivots[:, 1]]  # [num_pivot]
 
-        # Calculate scores for each 3-clique
-        SC2_ADD_C3 = (
-                SC2_pivots.unsqueeze(1) +
-                SC2_for_search[pivots[:, 0]] +
-                SC2_for_search[pivots[:, 1]]
-        )  # [num_pivot, N]
 
-        # Mask the C3 scores
-        SC2_C3 = SC2_ADD_C3 * indic_c3_torch.float()
-        cliques_dyn = True
-        if cliques_dyn:
-            # Get top-2 indices for each row
-            topk_K2 = torch.topk(SC2_C3, k=k_cliques_size-2, dim=1)[1]  # [num_pivot, 2]
-
-            # Initialize cliques tensor [num_pivot*2, 3]
-            num_pivots = pivots.size(0)
-            cliques_tensor = torch.zeros(
-                (num_pivots , k_cliques_size),
-                dtype=torch.long,
-                device=corr_kpts_src.device
-            )
-
-            # Upper part
-            cliques_tensor[:num_pivots, :2] = pivots
-
-            for idx in range(k_cliques_size-2):
-                cliques_tensor[:num_pivots, 2 + idx] = topk_K2[:, idx]
-
-        else:
-
-            topk_K2 = torch.topk(SC2_C3, k=2, dim=1)[1]
-            # Initialize cliques tensor [num_pivot*2, 3]
-
-            num_pivots = pivots.size(0)
-            cliques_tensor = torch.zeros(
-                (num_pivots *2,3),
-                dtype=torch.long,
-                device=corr_kpts_src.device
-            )
-
-            # Upper part
-            cliques_tensor[:num_pivots, :2] = pivots
-            cliques_tensor[:num_pivots, 2] = topk_K2[:, 0]
-            # Lower part
-            cliques_tensor[num_pivots:, :2] = pivots
-            cliques_tensor[num_pivots:, 2] = topk_K2[:, 1]
+        # cliques_dyn = True
+        # if cliques_dyn:
+        #     # Get top-2 indices for each row
+        #     topk_K2 = torch.topk(SC2_C3, k=k_cliques_size-2, dim=1)[1]  # [num_pivot, 2]
+        #
+        #     # Initialize cliques tensor [num_pivot*2, 3]
+        #     num_pivots = pivots.size(0)
+        #     cliques_tensor = torch.zeros(
+        #         (num_pivots , k_cliques_size),
+        #         dtype=torch.long,
+        #         device=corr_kpts_src.device
+        #     )
+        #
+        #     # Upper part
+        #     cliques_tensor[:num_pivots, :2] = pivots
+        #
+        #     for idx in range(k_cliques_size-2):
+        #         cliques_tensor[:num_pivots, 2 + idx] = topk_K2[:, idx]
+        #
+        # else:
+        #
+        #     topk_K2 = torch.topk(SC2_C3, k=2, dim=1)[1]
+        #     # Initialize cliques tensor [num_pivot*2, 3]
+        #
+        #     num_pivots = pivots.size(0)
+        #     cliques_tensor = torch.zeros(
+        #         (num_pivots *2,3),
+        #         dtype=torch.long,
+        #         device=corr_kpts_src.device
+        #     )
+        #
+        #     # Upper part
+        #     cliques_tensor[:num_pivots, :2] = pivots
+        #     cliques_tensor[:num_pivots, 2] = topk_K2[:, 0]
+        #     # Lower part
+        #     cliques_tensor[num_pivots:, :2] = pivots
+        #     cliques_tensor[num_pivots:, 2] = topk_K2[:, 1]
 
         # Apply coplanar constraint (align with C++ behavior)
+        cliques_tensor = torch.stack(valid_cliques_list)
         cliques_tensor = coplanar_constraint_more_points(
             cliques_tensor,
             corr_kpts_src,
@@ -192,25 +225,24 @@ class TurboRegGPU:
             kpts_src,
             kpts_dst,
             corr_ind,
-
             k=100
         )
 
-        # local filter
-        # from turboreg_py.local_filter import local_filter
-        # cliques_tensor = local_filter(
-        #     cliques_tensor,
-        #     corr_kpts_src,
-        #     corr_kpts_dst,
-        #     kpts_src,
-        #     kpts_dst,
-        #     corr_ind,
-        #     feature_kpts_src = None,  # Disable feature-based filtering to avoid index bounds issues
-        #     feature_kpts_dst = None,
-        #     threshold=0.05,
-        #     k=20,
-        #     num_cliques=10
-        # )
+        #local filter
+        from turboreg_py.local_filter import local_filter
+        cliques_tensor = local_filter(
+            cliques_tensor,
+            corr_kpts_src,
+            corr_kpts_dst,
+            kpts_src,
+            kpts_dst,
+            corr_ind,
+            feature_kpts_src = None,  # Disable feature-based filtering to avoid index bounds issues
+            feature_kpts_dst = None,
+            threshold=0.05,
+            k=20,
+            num_cliques=20
+        )
 
         # from turboreg_py.sphere_filter import sphere_filter
         # cliques_tensor = sphere_filter(
@@ -245,7 +277,7 @@ class TurboRegGPU:
             inlier_threshold=self.tau_inlier
         )
 
-        vis = True
+        vis = False
         if vis:
             refined_trans_numpy = refined_trans.cpu().numpy()
             trans_gt_numpy = trans_gt.cpu().numpy()
