@@ -314,7 +314,7 @@ class TurboRegGPU:
             inlier_threshold=self.tau_inlier
         )
 
-        vis = True
+        vis = False
         if vis:
             refined_trans_numpy = refined_trans.cpu().numpy()
             trans_gt_numpy = trans_gt.cpu().numpy()

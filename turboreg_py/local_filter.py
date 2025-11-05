@@ -51,16 +51,17 @@ def local_filter_2(cliques_tensor: torch.Tensor,
     kpts_src_transformed = torch.einsum('cnm,mk->cnk', cliques_wise_trans_3x3, kpts_src.T) + cliques_wise_trans_3x1
     kpts_src_transformed = kpts_src_transformed.permute(0, 2, 1)  # [C, M, 3]
 
-    iter_radiuss = [resolution * 2,resolution *5]
-    iter_points_sizes = [20,50]
-    iter_cliques_size = [100,50]
-    for idx, (radius, search_size, clique_size) in enumerate(zip(iter_radiuss, iter_points_sizes, iter_cliques_size)):
+    iter_radiuss = [resolution ,resolution *2,resolution *4]
+    iter_points_sizes = [20,50,100]
+    iter_cliques_size = [100,50,20]
+    overlap_thresholds = [0.2,0.3,0.4]
+    for idx, (radius, search_size, clique_size,overlap_threshold) in enumerate(zip(iter_radiuss, iter_points_sizes, iter_cliques_size,overlap_thresholds)):
         overlap = local_overlap(kpts_src_transformed,cliques_src_points_transformed,kpts_dst,cliques_kpts_dst_points,radius,search_size,clique_size,resolution)
         # 1. 筛选“每行所有元素都>0.2”的点（用 all(dim=-1) 而非 prod）
-        mask = (overlap > 0.2).all(dim=-1)  # 形状 [N]，True=该行全>0.2，False=否则
+        mask = (overlap > overlap_threshold).all(dim=-1)  # 形状 [N]，True=该行全>0.2，False=否则
         # print("\n筛选掩码 mask:\n", mask)
 
-        if mask.sum() == 0:
+        if mask.sum() < iter_cliques_size[-1]:
             break
 
         # 2. 筛选符合条件的点（形状从 [N,3] → [M,3]，M是符合条件的点数）
