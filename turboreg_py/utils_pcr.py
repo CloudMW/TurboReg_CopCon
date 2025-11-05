@@ -73,6 +73,33 @@ def select_non_coplanar_cliques_ranked(cliques_points_src, M, threshold=1e-3):
     return selected_indices, selected_cliques, selected_singular_values.tolist()
 
 
+def knn_search(corr_kpts, cliques_kpts_point, k=5):
+    # KNN search: For each transformation, find k nearest neighbors for each of the 3 keypoints
+    # corr_kpts_src_sub_transformed: [N, 3, 3] - N transformations, 3 keypoints each
+    # kpts_src_prime: [N, M, 3] - N transformations, M source points each
+    #
+    # N = corr_kpts_src_sub_transformed.shape[0]
+    # M = kpts_src_prime.shape[1]
+    # C = corr_kpts_src_sub_transformed.shape[1]  # Should be 3
+    # # Compute pairwise distances for each transformation
+    # # For each transformation i, compute distance between 3 keypoints and M source points
+    # # Reshape for broadcasting: [N, 3, 1, 3] - [N, 1, M, 3] = [N, 3, M, 3]
+    # # kpts_expanded = corr_kpts_src_sub_transformed.unsqueeze(2)  # [N, 3, 1, 3]
+    # src_expanded = kpts_src_prime.unsqueeze(1)  # [N, 1, M, 3]
+    cliques_num,cliques_size ,_ = cliques_kpts_point.shape
+    cliques_kpts_point_flatten = cliques_kpts_point.view(cliques_num*cliques_size,3)
+    cliques_kpts_point_flatten_expanded = cliques_kpts_point_flatten.unsqueeze(1)
+    corr_kpts_expanded = corr_kpts.unsqueeze(0)
+    # Compute squared Euclidean distances
+    dists = torch.sum((cliques_kpts_point_flatten_expanded - corr_kpts_expanded) ** 2, dim=-1)  # [N, 3, M]
+
+    # Find k nearest neighbors for each keypoint
+    _, knn_indices = torch.topk(dists, k, dim=-1, largest=False)  # [N, 3, k]
+    knn_point = corr_kpts[knn_indices].view(cliques_num,cliques_size*k,-1)
+
+    return knn_point
+
+
 def coplanar_constraint_more_points(
         cliques_tensor: torch.Tensor,
         corr_kpts_src: torch.Tensor,
@@ -86,8 +113,11 @@ def coplanar_constraint_more_points(
     N,C = cliques_tensor.shape
 
     cliques_points_src = corr_kpts_src[cliques_tensor.view(-1)].view(-1,C, 3)
+    cliques_knn_point = knn_search(kpts_src,cliques_points_src)
+
+    selected_index  ,_,_ = select_non_coplanar_cliques_ranked(cliques_knn_point, k, threshold=1e-3)
+
     cliques_points_dst = corr_kpts_dst[cliques_tensor.view(-1)].view(-1, C, 3)
-    selected_index  ,_,_ = select_non_coplanar_cliques_ranked(cliques_points_src, k, threshold=1e-3)
     cliques_tensor = cliques_tensor[selected_index]
     return  cliques_tensor
 
