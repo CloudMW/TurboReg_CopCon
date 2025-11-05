@@ -16,7 +16,7 @@ except ImportError:
     print("Warning: Open3D not found. Falling back to PyTorch k-NN normal estimation.")
 
 
-def select_non_coplanar_cliques_ranked(cliques_points_src, M, threshold=1e-3):
+def select_non_coplanar_cliques_ranked(cliques_points_src, M, threshold=1e-2):
     """
     从N个团中挑选M个不共面的团，按"不共面程度"排序
     （最小奇异值越大，表示越不共面）
@@ -73,7 +73,7 @@ def select_non_coplanar_cliques_ranked(cliques_points_src, M, threshold=1e-3):
     return selected_indices, selected_cliques, selected_singular_values.tolist()
 
 
-def knn_search(corr_kpts, cliques_kpts_point, k=5):
+def knn_search(corr_kpts, cliques_kpts_point, k=2):
     # KNN search: For each transformation, find k nearest neighbors for each of the 3 keypoints
     # corr_kpts_src_sub_transformed: [N, 3, 3] - N transformations, 3 keypoints each
     # kpts_src_prime: [N, M, 3] - N transformations, M source points each
@@ -115,7 +115,7 @@ def coplanar_constraint_more_points(
     cliques_points_src = corr_kpts_src[cliques_tensor.view(-1)].view(-1,C, 3)
     cliques_knn_point = knn_search(kpts_src,cliques_points_src)
 
-    selected_index  ,_,_ = select_non_coplanar_cliques_ranked(cliques_knn_point, k, threshold=1e-3)
+    selected_index  ,_,_ = select_non_coplanar_cliques_ranked(cliques_knn_point, k, threshold=1e-2)
 
     cliques_points_dst = corr_kpts_dst[cliques_tensor.view(-1)].view(-1, C, 3)
     cliques_tensor = cliques_tensor[selected_index]

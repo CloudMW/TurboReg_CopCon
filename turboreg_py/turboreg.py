@@ -263,7 +263,7 @@ class TurboRegGPU:
             kpts_src,
             kpts_dst,
             corr_ind,
-            k=100
+            k=500
         )
 
         # cliques_tensor = coplanar_constraint(
@@ -277,20 +277,20 @@ class TurboRegGPU:
         # )
 
         #local filter
-        # from turboreg_py.local_filter import local_filter
-        # cliques_tensor = local_filter(
-        #     cliques_tensor,
-        #     corr_kpts_src,
-        #     corr_kpts_dst,
-        #     kpts_src,
-        #     kpts_dst,
-        #     corr_ind,
-        #     feature_kpts_src = feature_kpts_src,  # Disable feature-based filtering to avoid index bounds issues
-        #     feature_kpts_dst = feature_kpts_dst,
-        #     threshold=0.01,
-        #     k=20,
-        #     num_cliques=20
-        # )
+        from turboreg_py.local_filter import local_filter
+        cliques_tensor = local_filter(
+            cliques_tensor,
+            corr_kpts_src,
+            corr_kpts_dst,
+            kpts_src,
+            kpts_dst,
+            corr_ind,
+            feature_kpts_src = feature_kpts_src,  # Disable feature-based filtering to avoid index bounds issues
+            feature_kpts_dst = feature_kpts_dst,
+            threshold=0.01,
+            k=20,
+            num_cliques=20
+        )
         #
 
 
@@ -315,7 +315,7 @@ class TurboRegGPU:
             inlier_threshold=self.tau_inlier
         )
 
-        vis = True
+        vis = False
         if vis:
             refined_trans_numpy = refined_trans.cpu().numpy()
             trans_gt_numpy = trans_gt.cpu().numpy()
