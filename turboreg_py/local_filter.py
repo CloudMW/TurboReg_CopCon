@@ -4,6 +4,391 @@ import open3d as o3d
 
 from turboreg_py.rigid_transform import rigid_transform_3d
 
+def local_filter_2(cliques_tensor: torch.Tensor,
+                 corr_kpts_src: torch.Tensor,
+                 corr_kpts_dst: torch.Tensor,
+                 kpts_src: torch.Tensor,
+                 kpts_dst: torch.Tensor,
+                 corr_ind: torch.Tensor,
+                 feature_kpts_src: torch.Tensor = None,
+                 feature_kpts_dst: torch.Tensor = None,
+                 threshold=0.01,
+                 num_cliques=100):
+    N = kpts_src.shape[0]
+    # 1. 计算 pairwise 距离矩阵（用 torch.cdist 高效计算，排除自身）
+    dist_matrix = torch.cdist(kpts_src, kpts_src, p=2.0)  # 形状 [N, N]，dist_matrix[i,i] = 0（自身距离）
+
+    # 2. 对每行（每个点的所有距离）排序，取第二个最小值（排除自身的最近邻）
+    # 升序排序后，第 0 个元素是自身（距离 0），第 1 个是最近邻
+    _, sorted_indices = torch.sort(dist_matrix, dim=1)
+    nn_distances = dist_matrix[torch.arange(N), sorted_indices[:, 1]]  # 每个点的最近邻距离，形状 [N]
+
+    # 3. 计算平均最近邻距离（分辨率）
+    resolution = torch.mean(nn_distances).item()
+
+
+    cliques_num,cliques_size = cliques_tensor.shape
+    corr_kpts_src_points = corr_kpts_src[cliques_tensor.view(-1)].view(-1, cliques_size, 3)  # [C, 3, 3]
+    cliques_kpts_dst_points = corr_kpts_dst[cliques_tensor.view(-1)].view(-1, cliques_size, 3)  # [C, 3, 3]
+
+    # Compute transformation for each clique
+    cliques_wise_trans = rigid_transform_3d(corr_kpts_src_points, cliques_kpts_dst_points)  # [C, 4, 4]
+
+    # Apply each transformation to its corresponding point group
+    # Extract rotation and translation from transformation matrices
+    cliques_wise_trans_3x3 = cliques_wise_trans[:, :3, :3]  # [C, 3, 3]
+    cliques_wise_trans_3x1 = cliques_wise_trans[:, :3, 3:4]  # [C, 3, 1]
+
+    # Transform each point group with its corresponding transformation
+    # corr_kpts_src_sub: [C, 3, 3] -> each group has 3 points
+    # Apply: R @ points.T + t for each group
+    cliques_src_points_transformed = torch.bmm(cliques_wise_trans_3x3,
+                                               corr_kpts_src_points.permute(0, 2,
+                                                                            1)) + cliques_wise_trans_3x1  # [C, 3, 3]
+    cliques_src_points_transformed = cliques_src_points_transformed.permute(0, 2, 1)  # [C, 3, 3]
+
+    # Transform source keypoints: R @ kpts_src.T + t
+    kpts_src_transformed = torch.einsum('cnm,mk->cnk', cliques_wise_trans_3x3, kpts_src.T) + cliques_wise_trans_3x1
+    kpts_src_transformed = kpts_src_transformed.permute(0, 2, 1)  # [C, M, 3]
+
+    iter_radiuss = [resolution * 2,resolution *5]
+    iter_points_sizes = [20,50]
+    iter_cliques_size = [100,50]
+    for idx, (radius, search_size, clique_size) in enumerate(zip(iter_radiuss, iter_points_sizes, iter_cliques_size)):
+        overlap = local_overlap(kpts_src_transformed,cliques_src_points_transformed,kpts_dst,cliques_kpts_dst_points,radius,search_size,clique_size,resolution)
+        # 1. 筛选“每行所有元素都>0.2”的点（用 all(dim=-1) 而非 prod）
+        mask = (overlap > 0.2).all(dim=-1)  # 形状 [N]，True=该行全>0.2，False=否则
+        # print("\n筛选掩码 mask:\n", mask)
+
+        if mask.sum() == 0:
+            break
+
+        # 2. 筛选符合条件的点（形状从 [N,3] → [M,3]，M是符合条件的点数）
+        filtered_overlap = overlap[mask]
+        # print("\n筛选后的数据 filtered_overlap:\n", filtered_overlap)
+
+        # 3. 对筛选后的点“每行求和”（得到每个点的总重叠度）
+        sum_overlap = filtered_overlap.sum(dim=-1)  # 形状 [M]
+        # print("\n每行求和结果 sum_overlap:\n", sum_overlap)
+
+        # 4. 排序（默认升序，若需降序加 descending=True）
+        sorted_sum, sorted_indices = torch.sort(sum_overlap, descending=True)  # 降序排序
+        # print("\n排序后的总重叠度（降序）:\n", sorted_sum)
+        # print("排序对应的索引:\n", sorted_indices)
+
+        sorted_indices = sorted_indices[:clique_size]
+        kpts_src_transformed = kpts_src_transformed[mask][sorted_indices]
+        cliques_src_points_transformed = cliques_src_points_transformed[mask][sorted_indices]
+        cliques_kpts_dst_points = cliques_kpts_dst_points[mask][sorted_indices]
+        cliques_tensor = cliques_tensor[mask][sorted_indices]
+    return cliques_tensor
+
+def local_overlap(kpts_src_transformed,cliques_src_points_transformed,kpts_dst,corr_kpts_dst_points,search_radius,search_max_points,return_cliques_num,resolution):
+    src_knn_points, knn_indices_src ,mask_src= knn_search_with_radius_maxnum(cliques_src_points_transformed, kpts_src_transformed,search_radius,search_max_points)  # [C, 3, k, 3]
+    dst_knn_points, knn_indices_dst ,mask_dst= knn_search_with_radius_maxnum(corr_kpts_dst_points,
+                                                 kpts_dst.unsqueeze(0).repeat(corr_kpts_dst_points.shape[0], 1, 1),search_radius,search_max_points)
+
+    overlap = voxel_overlap_ratio_bcn(src_knn_points,dst_knn_points,mask_src,mask_dst,voxel_size =2*resolution )
+    return overlap
+
+
+import torch
+
+import torch
+
+
+def voxel_overlap_ratio_bcn(A, B, maskA, maskB, voxel_size=0.02, eps=1e-8):
+    """
+    向量化计算 batched + multi-region 点云体素重叠率 (voxel IoU)
+
+    Args:
+        A: [B, C, N, 3]
+        B: [B, C, N, 3]
+        maskA: [B, C, N] bool
+        maskB: [B, C, N] bool
+        voxel_size: float
+    Returns:
+        overlap: [B, C]
+    """
+    device = A.device
+    Bsize, Csize, N, _ = A.shape
+    BC = Bsize * Csize
+
+    # reshape 到 [BC, N, 3]
+    A = A.reshape(BC, N, 3)
+    B = B.reshape(BC, N, 3)
+    maskA = maskA.reshape(BC, N)
+    maskB = maskB.reshape(BC, N)
+
+    # 取有效点
+    A_valid = A[maskA]  # [total_valid_A, 3]
+    B_valid = B[maskB]  # [total_valid_B, 3]
+
+    # 批索引
+    batch_ids_A = torch.arange(BC, device=device).repeat_interleave(maskA.sum(dim=1))
+    batch_ids_B = torch.arange(BC, device=device).repeat_interleave(maskB.sum(dim=1))
+
+    # 体素化
+    A_vox = torch.floor(A_valid / voxel_size).to(torch.int64)
+    B_vox = torch.floor(B_valid / voxel_size).to(torch.int64)
+
+    # 合并批次索引
+    keysA = torch.cat([batch_ids_A[:, None], A_vox], dim=1)
+    keysB = torch.cat([batch_ids_B[:, None], B_vox], dim=1)
+
+    # 每个 batch 内 unique
+    keysA = torch.unique(keysA, dim=0)
+    keysB = torch.unique(keysB, dim=0)
+
+    # 哈希编码（避免冲突）
+    primes = torch.tensor([1_000_003, 73856093, 19349663, 83492791],
+                          dtype=torch.int64, device=device)
+    A_hash = (keysA * primes[:4]).sum(dim=1)
+    B_hash = (keysB * primes[:4]).sum(dim=1)
+
+    batchA = keysA[:, 0]
+    batchB = keysB[:, 0]
+
+    # 交集检测
+    isin = torch.isin(A_hash, B_hash)
+
+    # 按 batch 统计交、并集
+    inter_per_batch = torch.zeros(BC, dtype=torch.int64, device=device)
+    inter_per_batch.scatter_add_(0, batchA, isin.to(torch.int64))
+
+    countA = torch.bincount(batchA, minlength=BC)
+    countB = torch.bincount(batchB, minlength=BC)
+    union_per_batch = countA + countB - inter_per_batch
+
+    # IoU
+    overlap = inter_per_batch.float() / (union_per_batch.float() + eps)
+    overlap = overlap.view(Bsize, Csize)
+    return overlap
+
+
+def knn_search_with_radius_maxnum(corr_kpts_src_sub_transformed, kpts_src_prime,radius, k):
+    # KNN search: For each transformation, find k nearest neighbors for each of the 3 keypoints
+    # corr_kpts_src_sub_transformed: [N, 3, 3] - N transformations, 3 keypoints each
+    # kpts_src_prime: [N, M, 3] - N transformations, M source points each
+
+    N = corr_kpts_src_sub_transformed.shape[0]
+    M = kpts_src_prime.shape[1]
+    C = corr_kpts_src_sub_transformed.shape[1]  # Should be 3
+    # Compute pairwise distances for each transformation
+    # For each transformation i, compute distance between 3 keypoints and M source points
+    # Reshape for broadcasting: [N, 3, 1, 3] - [N, 1, M, 3] = [N, 3, M, 3]
+    kpts_expanded = corr_kpts_src_sub_transformed.unsqueeze(2)  # [N, 3, 1, 3]
+    src_expanded = kpts_src_prime.unsqueeze(1)  # [N, 1, M, 3]
+
+    # Compute squared Euclidean distances
+    dists = torch.sum((kpts_expanded - src_expanded) ** 2, dim=-1)  # [N, 3, M]
+
+    # Find k nearest neighbors for each keypoint
+    knn_dis, knn_indices = torch.topk(dists, k, dim=2, largest=False)  # [N, 3, k]
+    mask = knn_dis <radius
+    # Gather the k nearest neighbor points
+    # Expand indices for gathering: [N, 3, k, 1] -> [N, 3, k, 3]
+    knn_indices_expanded = knn_indices.unsqueeze(-1).expand(-1, -1, -1, 3)  # [N, 3, k, 3]
+
+    # Expand kpts_src_prime for gathering: [N, 1, M, 3] -> [N, 3, M, 3]
+    kpts_src_prime_expanded = kpts_src_prime.unsqueeze(1).expand(-1, C, -1, -1)  # [N, 3, M, 3]
+
+    # Gather k nearest neighbors: [N, 3, k, 3]
+    knn_points = torch.gather(kpts_src_prime_expanded, 2, knn_indices_expanded)  # [N, 3, k, 3]
+
+    # visualize_knn_neighbors(
+    #     kpts_src_prime,
+    #     knn_points,
+    # corr_kpts_src_sub_transformed
+    # )
+    return knn_points, knn_indices,mask
+def visualize_knn_neighbors(
+        kpts_src: torch.Tensor,
+        src_knn_points: torch.Tensor,
+        corr_kpts_src_sub_transformed: torch.Tensor = None,
+        kpts_dst: torch.Tensor = None,
+        dst_knn_points: torch.Tensor = None,
+        corr_kpts_dst_sub_transformed: torch.Tensor = None,
+        point_size: float = 2.0,
+        keypoint_size: float = 20.0,
+        neighbor_size: float = 6.0,
+        final_mae=None
+):
+    """
+    可视化源和目标点云以及它们的关键点和邻居点（批量，单窗口，按键切换）
+
+    - 键盘控制：N 下一帧，P 上一帧，Q 退出
+    - 使用一个窗口，避免多窗口/阻塞造成的卡死
+    - 主点云通过 RenderOption.point_size 控制大小；关键点/邻居用小球体（可单独控制尺寸）
+    """
+    # Convert tensors to numpy
+    if isinstance(kpts_src, torch.Tensor):
+        kpts_src = kpts_src.cpu().numpy()
+    if isinstance(src_knn_points, torch.Tensor):
+        src_knn_points = src_knn_points.cpu().numpy()
+    if corr_kpts_src_sub_transformed is not None and isinstance(corr_kpts_src_sub_transformed, torch.Tensor):
+        corr_kpts_src_sub_transformed = corr_kpts_src_sub_transformed.cpu().numpy()
+
+    if kpts_dst is not None and isinstance(kpts_dst, torch.Tensor):
+        kpts_dst = kpts_dst.cpu().numpy()
+    if dst_knn_points is not None and isinstance(dst_knn_points, torch.Tensor):
+        dst_knn_points = dst_knn_points.cpu().numpy()
+    if corr_kpts_dst_sub_transformed is not None and isinstance(corr_kpts_dst_sub_transformed, torch.Tensor):
+        corr_kpts_dst_sub_transformed = corr_kpts_dst_sub_transformed.cpu().numpy()
+
+    N = src_knn_points.shape[0]
+
+    # Colors for source keypoints (RGB) and destination keypoints (magenta/cyan/yellow)
+    src_colors = [np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0])]
+    dst_colors = [np.array([1.0, 0.0, 1.0]), np.array([0.0, 1.0, 1.0]), np.array([1.0, 1.0, 0.0])]
+
+    def build_geometries(i: int):
+        if (final_mae is not None):
+            print(f"\n=== Visualization for Transformation {i + 1}/{N} | Final MAE: {final_mae[i]} ===")
+
+        geometries = []
+
+        # 收集源中需排除的邻居点（避免重叠）
+        all_neighbor_indices = set()
+        for j in range(3):
+            neighbors = src_knn_points[i, j, :, :].copy()
+            for neighbor in neighbors:
+                distances = np.linalg.norm(kpts_src[i] - neighbor, axis=1)
+                matching = np.where(distances < 1e-6)[0]
+                all_neighbor_indices.update(matching.tolist())
+
+        # 源点云（去重叠）
+        all_idx = set(range(len(kpts_src[i])))
+        src_only_idx = list(all_idx - all_neighbor_indices)
+        if len(src_only_idx) > 0:
+            pcd_src = o3d.geometry.PointCloud()
+            pcd_src.points = o3d.utility.Vector3dVector(kpts_src[i][src_only_idx].copy())
+            colors_src = np.tile([0.7, 0.7, 0.7], (len(src_only_idx), 1)).astype(np.float64)
+            pcd_src.colors = o3d.utility.Vector3dVector(colors_src)
+            geometries.append(pcd_src)
+
+        # 目标点云
+        if kpts_dst is not None and len(kpts_dst) > i:
+            pcd_dst = o3d.geometry.PointCloud()
+            pcd_dst.points = o3d.utility.Vector3dVector(kpts_dst[i].copy())
+            colors_dst = np.tile([0.5, 0.5, 0.9], (len(kpts_dst[i]), 1)).astype(np.float64)
+            pcd_dst.colors = o3d.utility.Vector3dVector(colors_dst)
+            geometries.append(pcd_dst)
+
+        # 源邻居与关键点（球体）
+        for j in range(3):
+            neighbors = src_knn_points[i, j, :, :].copy()
+            color = src_colors[j]
+            for pt in neighbors:
+                sphere = o3d.geometry.TriangleMesh.create_sphere()
+                sphere.scale(neighbor_size * 0.001, center=np.array([0.0, 0.0, 0.0]))
+                sphere.compute_vertex_normals()
+                sphere.paint_uniform_color(color.tolist())
+                T = np.eye(4);
+                T[:3, 3] = pt
+                sphere.transform(T)
+                geometries.append(sphere)
+
+            if corr_kpts_src_sub_transformed is not None:
+                kp = corr_kpts_src_sub_transformed[i, j, :].copy()
+                sphere_k = o3d.geometry.TriangleMesh.create_sphere()
+                sphere_k.scale(keypoint_size * 0.001, center=np.array([0.0, 0.0, 0.0]))
+                sphere_k.compute_vertex_normals()
+                sphere_k.paint_uniform_color(color.tolist())
+                T = np.eye(4);
+                T[:3, 3] = kp
+                sphere_k.transform(T)
+                geometries.append(sphere_k)
+
+        # 目标邻居与关键点（球体）
+        if dst_knn_points is not None:
+            for j in range(3):
+                neighbors = dst_knn_points[i, j, :, :].copy()
+                color = dst_colors[j]
+                for pt in neighbors:
+                    sphere = o3d.geometry.TriangleMesh.create_sphere()
+                    sphere.scale(neighbor_size * 0.001, center=np.array([0.0, 0.0, 0.0]))
+                    sphere.compute_vertex_normals()
+                    sphere.paint_uniform_color(color.tolist())
+                    T = np.eye(4);
+                    T[:3, 3] = pt
+                    sphere.transform(T)
+                    geometries.append(sphere)
+
+                if corr_kpts_dst_sub_transformed is not None:
+                    kp = corr_kpts_dst_sub_transformed[i, j, :].copy()
+                    sphere_k = o3d.geometry.TriangleMesh.create_sphere()
+                    sphere_k.scale(keypoint_size * 0.001, center=np.array([0.0, 0.0, 0.0]))
+                    sphere_k.compute_vertex_normals()
+                    sphere_k.paint_uniform_color(color.tolist())
+                    T = np.eye(4);
+                    T[:3, 3] = kp
+                    sphere_k.transform(T)
+                    geometries.append(sphere_k)
+
+        return geometries
+
+    # 渲染选项设置
+    def set_render_opts(vis: o3d.visualization.Visualizer):
+        opt = vis.get_render_option()
+        opt.point_size = float(point_size)
+        opt.background_color = np.asarray([0.0, 0.0, 0.0])
+        try:
+            setattr(opt, 'light_on', False)
+        except Exception:
+            pass
+        try:
+            setattr(opt, 'mesh_show_back_face', True)
+        except Exception:
+            pass
+
+    # 状态与回调
+    state = {'idx': 0}
+
+    def show_current(vis):
+        vis.clear_geometries()
+
+        geoms = build_geometries(state['idx'])
+        for g in geoms:
+            vis.add_geometry(g)
+        set_render_opts(vis)
+        vis.update_renderer()
+        return False
+
+    def cb_next(vis):
+        if state['idx'] < N - 1:
+            state['idx'] += 1
+            print(f"Switch to {state['idx'] + 1}/{N}")
+            return show_current(vis)
+        return False
+
+    def cb_prev(vis):
+        if state['idx'] > 0:
+            state['idx'] -= 1
+            print(f"Switch to {state['idx'] + 1}/{N}")
+            return show_current(vis)
+        return False
+
+    def cb_quit(vis):
+        vis.close()
+        return False
+
+    # 初始几何体 + 键盘回调
+    init_geoms = build_geometries(0)
+    key_callbacks = {
+        ord('N'): cb_next,
+        ord('P'): cb_prev,
+        ord('Q'): cb_quit,
+    }
+    print("Controls: N(next), P(prev), Q(quit)")
+
+    o3d.visualization.draw_geometries_with_key_callbacks(
+        init_geoms,
+        key_callbacks,
+        window_name="KNN neighbors (src+dst)",
+        width=1024,
+        height=768
+    )
 
 def local_filter(cliques_tensor: torch.Tensor,
                  corr_kpts_src: torch.Tensor,
