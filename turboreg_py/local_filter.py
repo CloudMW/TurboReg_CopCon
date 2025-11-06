@@ -93,19 +93,20 @@ def local_filter_2(cliques_tensor: torch.Tensor,
 
 
 
+    # iter_radiuss = [resolution*5, resolution * 10]
+    # iter_points_sizes = [200, 400]
+    # iter_cliques_size = [100, 50]
+    # overlap_thresholds = [0.5, 0.4]
+
     iter_radiuss = [resolution*5, resolution * 10]
-    iter_points_sizes = [200, 400]
-    iter_cliques_size = [100, 50]
-    overlap_thresholds = [0.3, 0.5]
+    search_point_nums = [200]
+    overlap_dis_thresholds = [0.02]
 
 
-
-
-
-    for idx, (radius, search_size, clique_size, overlap_threshold) in enumerate(
-            zip(iter_radiuss, iter_points_sizes, iter_cliques_size, overlap_thresholds)):
+    for idx, (radius, search_size, overlap_dis_threshold) in enumerate(
+            zip(iter_radiuss, search_point_nums, overlap_dis_thresholds)):
         overlap = local_overlap(src_cloud_trans, cliques_src_points_transformed, dst_cloud_tensor, cliques_kpts_dst_points,
-                                radius, search_size, clique_size, resolution)
+                                radius, search_size, overlap_dis_threshold ,search_size/4 )
         # 1. 筛选“每行所有元素都>0.2”的点（用 all(dim=-1) 而非 prod）
         # mask = (overlap > overlap_threshold).all(dim=-1)  # 形状 [N]，True=该行全>0.2，False=否则
         # print("\n筛选掩码 mask:\n", mask)
@@ -134,7 +135,7 @@ def local_filter_2(cliques_tensor: torch.Tensor,
 
 
 def local_overlap(batch_cloud_src_trans, cliques_src_points_transformed, dst_cloud, cliques_dst_point, search_radius,
-                  search_max_points, return_cliques_num, resolution):
+                  search_max_points, overlap_dis_threshold,overlap_num_threshold):
 
     B, C, M = batch_cloud_src_trans.shape
     src_knn_points, knn_indices_src, mask_src = knn_search_with_radius_maxnum(cliques_src_points_transformed,
@@ -151,8 +152,7 @@ def local_overlap(batch_cloud_src_trans, cliques_src_points_transformed, dst_clo
     # overlap = voxel_overlap_ratio_bcn(src_knn_points, dst_knn_points, mask_src, mask_dst, voxel_size=resolution)
     min_distances_src2dst, index_src2dst = compute_neighbor_distances(src_knn_points,dst_knn_points,mask_src, mask_dst)
     min_distances_dst2src, index_dst2src = compute_neighbor_distances(dst_knn_points,src_knn_points,mask_src, mask_dst)
-    overlap_dis_threshold = 0.01
-    overlap_num_threshold = search_max_points/4
+
     src_overlap = overlap_cal(min_distances_src2dst,search_max_points,overlap_dis_threshold,overlap_num_threshold)
     dst_overlap = overlap_cal(min_distances_dst2src,search_max_points,overlap_dis_threshold,overlap_num_threshold)
 
@@ -170,7 +170,7 @@ def local_overlap(batch_cloud_src_trans, cliques_src_points_transformed, dst_clo
     # print("排序对应的索引:\n", sorted_indices)
     overlap_big_zero = (overlap_sum > 0).sum()
 
-    sorted_indices = sorted_indices[:min(return_cliques_num, overlap_big_zero)]
+    # sorted_indices = sorted_indices[:min(return_cliques_num, overlap_big_zero)]
 
 
 

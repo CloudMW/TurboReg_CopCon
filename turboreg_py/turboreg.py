@@ -256,19 +256,7 @@ class TurboRegGPU:
 
 
         # cliques_tensor =seeds[cliques_tensor]
-        cliques_tensor = coplanar_constraint_more_points(
-            cliques_tensor,
-            corr_kpts_src,
-            corr_kpts_dst,
-            kpts_src,
-            kpts_dst,
-            corr_ind,
-            k=200
-        )
-
-        from turboreg_py.voexl_test import visualize_point_cloud_with_voxel_grid_lines
-        # visualize_point_cloud_with_voxel_grid_lines(src_cloud)
-        # cliques_tensor = coplanar_constraint(
+        # cliques_tensor = coplanar_constraint_more_points(
         #     cliques_tensor,
         #     corr_kpts_src,
         #     corr_kpts_dst,
@@ -277,6 +265,18 @@ class TurboRegGPU:
         #     corr_ind,
         #     k=500
         # )
+        # visualize_point_cloud_with_voxel_grid_lines(src_cloud)
+        from turboreg_py.voexl_test import visualize_point_cloud_with_voxel_grid_lines
+
+        cliques_tensor = coplanar_constraint(
+            cliques_tensor,
+            corr_kpts_src,
+            corr_kpts_dst,
+            kpts_src,
+            kpts_dst,
+            corr_ind,
+            k=500
+        )
 
         #local filter
         from turboreg_py.local_filter import local_filter,local_filter_2
