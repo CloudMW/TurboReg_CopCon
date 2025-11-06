@@ -263,9 +263,11 @@ class TurboRegGPU:
             kpts_src,
             kpts_dst,
             corr_ind,
-            k=500
+            k=200
         )
 
+        from turboreg_py.voexl_test import visualize_point_cloud_with_voxel_grid_lines
+        # visualize_point_cloud_with_voxel_grid_lines(src_cloud)
         # cliques_tensor = coplanar_constraint(
         #     cliques_tensor,
         #     corr_kpts_src,
@@ -273,7 +275,7 @@ class TurboRegGPU:
         #     kpts_src,
         #     kpts_dst,
         #     corr_ind,
-        #     k=100
+        #     k=500
         # )
 
         #local filter
@@ -284,7 +286,10 @@ class TurboRegGPU:
             corr_kpts_dst,
             kpts_src,
             kpts_dst,
+            src_cloud,
+            dst_cloud,
             corr_ind,
+            trans_gt = trans_gt,
             feature_kpts_src = feature_kpts_src,  # Disable feature-based filtering to avoid index bounds issues
             feature_kpts_dst = feature_kpts_dst,
             threshold=0.01,

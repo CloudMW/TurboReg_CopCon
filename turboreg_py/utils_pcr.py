@@ -47,7 +47,7 @@ def select_non_coplanar_cliques_ranked(cliques_points_src, M, threshold=1e-2):
 
     # 获取每个团的最小奇异值
     min_singular_values = S[:, -1]  # [N]
-
+    return min_singular_values
     # 找到不共面的团（最小奇异值 >= threshold）
     non_coplanar_mask = min_singular_values >= threshold
     non_coplanar_indices = torch.where(non_coplanar_mask)[0]
@@ -95,7 +95,7 @@ def knn_search(corr_kpts, cliques_kpts_point, k=2):
 
     # Find k nearest neighbors for each keypoint
     _, knn_indices = torch.topk(dists, k, dim=-1, largest=False)  # [N, 3, k]
-    knn_point = corr_kpts[knn_indices].view(cliques_num,cliques_size*k,-1)
+    knn_point = corr_kpts[knn_indices].view(cliques_num,cliques_size,k,-1)
 
     return knn_point
 
@@ -113,12 +113,41 @@ def coplanar_constraint_more_points(
     N,C = cliques_tensor.shape
 
     cliques_points_src = corr_kpts_src[cliques_tensor.view(-1)].view(-1,C, 3)
-    cliques_knn_point = knn_search(kpts_src,cliques_points_src)
+    cliques_knn_point = knn_search(kpts_src,cliques_points_src,k=3)
 
-    selected_index  ,_,_ = select_non_coplanar_cliques_ranked(cliques_knn_point, k, threshold=1e-2)
+    ## 多个关键点之间计算
+    ## 0,1
+    cliques_knn_point_01 = cliques_knn_point[:,[0,1]].view(N,-1,3)
+    min_singular_values_01= select_non_coplanar_cliques_ranked(cliques_knn_point_01, k, threshold=1e-2)
+    ## 1,2
+    cliques_knn_point_12 = cliques_knn_point[:,[1,2]].view(N,-1,3)
+    min_singular_values_12= select_non_coplanar_cliques_ranked(cliques_knn_point_12, k, threshold=1e-2)
+    ## 0,2
+    cliques_knn_point_02 = cliques_knn_point[:,[0,2]].view(N,-1,3)
+    min_singular_values_02= select_non_coplanar_cliques_ranked(cliques_knn_point_02, k, threshold=1e-2)
+    coplanar_threshold = 1e-2
+    mask = (min_singular_values_01>coplanar_threshold)*(min_singular_values_12>coplanar_threshold)*(min_singular_values_02>coplanar_threshold)
 
-    cliques_points_dst = corr_kpts_dst[cliques_tensor.view(-1)].view(-1, C, 3)
-    cliques_tensor = cliques_tensor[selected_index]
+    non_coplanar_indices = torch.where(mask)[0]
+    min_singular_values = min_singular_values_01+min_singular_values_12+min_singular_values_02
+    non_coplanar_values = min_singular_values[non_coplanar_indices]
+
+    num_non_coplanar = len(non_coplanar_indices)
+
+    if num_non_coplanar < k:
+        print(f"警告：只有 {num_non_coplanar} 个不共面的团，少于要求的 {k} 个")
+        print(f"将返回所有 {num_non_coplanar} 个不共面的团")
+        # 按最小奇异值降序排序
+        sorted_indices = torch.argsort(non_coplanar_values, descending=True)
+        selected_local_indices = sorted_indices
+    else:
+        # 选择最小奇异值最大的M个团（最不共面的）
+        sorted_indices = torch.argsort(non_coplanar_values, descending=True)
+        selected_local_indices = sorted_indices[:k]
+
+    selected_indices = non_coplanar_indices[selected_local_indices].tolist()
+
+    cliques_tensor = cliques_tensor[selected_indices]
     return  cliques_tensor
 
 def coplanar_constraint(

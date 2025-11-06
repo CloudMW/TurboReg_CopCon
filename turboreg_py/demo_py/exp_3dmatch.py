@@ -240,16 +240,16 @@ if __name__ == "__main__":
         print("CUDA is available. Using GPU for computations.")
         device = torch.device("cuda:0")
     else:
-        # # If not debugging, try XPU (if present); otherwise fall back to CPU
-        # if not is_debugging():
-        #     xpu = getattr(torch, 'xpu', None)
-        #     if xpu is not None and xpu.is_available():
-        #         print("XPU is available. Using XPU for computations.")
-        #         device = torch.device("xpu:0")
-        #     else:
-        #         print("CUDA/XPU not available. Using CPU for computations.")
-        #         device = torch.device("cpu")
-        # else:
+        # If not debugging, try XPU (if present); otherwise fall back to CPU
+        if not is_debugging():
+            xpu = getattr(torch, 'xpu', None)
+            if xpu is not None and xpu.is_available():
+                print("XPU is available. Using XPU for computations.")
+                device = torch.device("xpu:0")
+            else:
+                print("CUDA/XPU not available. Using CPU for computations.")
+                device = torch.device("cpu")
+        else:
             print("CUDA is not available. Using CPU for computations.")
             device = torch.device("cpu")
     main(device)
