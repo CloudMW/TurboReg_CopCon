@@ -9,7 +9,9 @@ from .rigid_transform import RigidTransform
 from .core_turboreg import verification_v2_metric, post_refinement
 from .utils_pcr import coplanar_constraint, coplanar_constraint_more_points
 from turboreg_py.demo_py.utils_pcr import *
-class TurboRegGPU:
+
+
+class TurboRegPlus:
     """
     TurboReg GPU accelerated point cloud registration
     Fast and robust registration using clique-based hypothesis generation
@@ -47,8 +49,8 @@ class TurboRegGPU:
             self,
             corr_kpts_src: torch.Tensor, corr_kpts_dst: torch.Tensor, trans_gt: torch.Tensor, src_cloud: torch.Tensor,
             dst_cloud: torch.Tensor, kpts_src: torch.Tensor, kpts_dst: torch.Tensor, corr_ind: torch.Tensor,
-            feature_kpts_src:torch.Tensor = None,
-            feature_kpts_dst:torch.Tensor = None,
+            feature_kpts_src: torch.Tensor = None,
+            feature_kpts_dst: torch.Tensor = None,
             # kpts_src: torch.Tensor,
             #     kpts_dst: torch.Tensor,
             #     pts_src: torch.Tensor,
@@ -66,7 +68,8 @@ class TurboRegGPU:
             Transformation matrix [4, 4]
         """
         rigid_transform = self.run_reg_cxx(corr_kpts_src, corr_kpts_dst, trans_gt, src_cloud, dst_cloud, kpts_src,
-                                           kpts_dst, corr_ind,feature_kpts_src = feature_kpts_src, feature_kpts_dst=feature_kpts_dst)
+                                           kpts_dst, corr_ind, feature_kpts_src=feature_kpts_src,
+                                           feature_kpts_dst=feature_kpts_dst)
         return rigid_transform.get_transformation()
 
     def run_reg_cxx(
@@ -92,30 +95,22 @@ class TurboRegGPU:
             corr_kpts_src = corr_kpts_src[:N_node]
             corr_kpts_dst = corr_kpts_dst[:N_node]
 
-
-
-
         labels_o = self.inlier_ratio(kpts_src, kpts_dst, corr_ind, trans_gt)
         inlier_ratio_o = labels_o.float().sum() / labels_o.size(0)
         print(f'inlier_ratio origin: {inlier_ratio_o.item():.4f}')
-        #
-        # ## keypoints select
-        # from turboreg_py.keypoint import get_keypoint_from_scores
-        # src_keypoint_index = get_keypoint_from_scores(kpts_src, feature_kpts_src,k=kpts_src.shape[0]//10)
-        # tgt_keypoint_index = get_keypoint_from_scores(kpts_dst, feature_kpts_dst, k=kpts_dst.shape[0]//10)
-        # src_keypoint = kpts_src[src_keypoint_index]
-        # tgt_keypoint = kpts_dst[tgt_keypoint_index]
-        # src_keypoint_feature = feature_kpts_src[src_keypoint_index]
-        # tgt_keypoint_feature = feature_kpts_dst[tgt_keypoint_index]
-        # corr = self.get_corr(src_keypoint_feature,tgt_keypoint_feature)
-        # labels = self.inlier_ratio(src_keypoint,tgt_keypoint,corr,trans_gt)
-        # inlier_ratio = labels.float().sum() / labels.size(0)
-        # print(f'inlier_ratio: {inlier_ratio.item():.4f}')
 
-
-
-
-
+        ## keypoints select
+        from turboreg_py.keypoint import get_keypoint_from_scores
+        src_keypoint_index = get_keypoint_from_scores(kpts_src, feature_kpts_src, k=kpts_src.shape[0] // 10)
+        tgt_keypoint_index = get_keypoint_from_scores(kpts_dst, feature_kpts_dst, k=kpts_dst.shape[0] // 10)
+        src_keypoint = kpts_src[src_keypoint_index]
+        tgt_keypoint = kpts_dst[tgt_keypoint_index]
+        src_keypoint_feature = feature_kpts_src[src_keypoint_index]
+        tgt_keypoint_feature = feature_kpts_dst[tgt_keypoint_index]
+        corr = self.get_corr(src_keypoint_feature, tgt_keypoint_feature)
+        labels = self.inlier_ratio(src_keypoint, tgt_keypoint, corr, trans_gt)
+        inlier_ratio = labels.float().sum() / labels.size(0)
+        print(f'inlier_ratio: {inlier_ratio.item():.4f}')
 
         k_cliques_size = 3
         # Compute C2 (compatibility matrix)
@@ -127,11 +122,6 @@ class TurboRegGPU:
             corr_kpts_dst.unsqueeze(1) - corr_kpts_dst.unsqueeze(0),
             p=2, dim=-1
         )  # [N, N]
-
-
-
-
-
 
         cross_dist = torch.abs(src_dist - target_dist)  # [N, N]
 
@@ -148,7 +138,6 @@ class TurboRegGPU:
         # Compute SC2 (compatibility scores)
         # Align with C++: SC2 = (C2 @ C2) * C2 (Hadamard product with C2)
         SC2 = torch.matmul(C2, C2) * C2
-
 
         # from turboreg_py.seed_point import cal_leading_eigenvector,pick_seeds
         # SC_dist_thre = 0.1
@@ -194,7 +183,7 @@ class TurboRegGPU:
 
         num_pivots = pivots.size(0)
         cliques_tensor = torch.zeros(
-            (num_pivots *2,3),
+            (num_pivots * 2, 3),
             dtype=torch.long,
             device=corr_kpts_src.device
         )
@@ -207,11 +196,6 @@ class TurboRegGPU:
         cliques_tensor[num_pivots:, 2] = topk_K2[:, 1]
 
         # Apply coplanar constraint (align with C++ behavior)
-
-
-
-
-
 
         # cliques_tensor =seeds[cliques_tensor]
         # cliques_tensor = coplanar_constraint_more_points(
@@ -236,7 +220,7 @@ class TurboRegGPU:
         #     k=500
         # )
 
-        #local filter
+        # local filter
         # from turboreg_py.local_filter import local_filter,local_filter_2
         # cliques_tensor = local_filter_2(
         #     cliques_tensor,
@@ -255,7 +239,6 @@ class TurboRegGPU:
         # )
         #
 
-
         # Verification with metric selection
         model_selector = ModelSelection(self.eval_metric, self.tau_inlier)
         best_in_num, best_trans, res, cliques_wise_trans, idx_best_guess = verification_v2_metric(
@@ -264,9 +247,6 @@ class TurboRegGPU:
             corr_kpts_dst,
             model_selector
         )
-
-
-
 
         # Post refinement
         refined_trans = post_refinement(
@@ -277,11 +257,11 @@ class TurboRegGPU:
             inlier_threshold=self.tau_inlier
         )
 
-        vis = False
+        vis = True
         if vis:
             refined_trans_numpy = refined_trans.cpu().numpy()
             trans_gt_numpy = trans_gt.cpu().numpy()
-            rre, rte =compute_transformation_error(trans_gt_numpy, refined_trans_numpy)
+            rre, rte = compute_transformation_error(trans_gt_numpy, refined_trans_numpy)
             is_succ = (rre < 15) & (rte < 0.3)
             if not is_succ:
                 import turboreg_py.visualization_debug as vis_debug
@@ -295,7 +275,7 @@ class TurboRegGPU:
         trans_final = RigidTransform(refined_trans)
         return trans_final
 
-    def inlier_ratio(self,src_keypts,tgt_keypts,corr,gt_trans):
+    def inlier_ratio(self, src_keypts, tgt_keypts, corr, gt_trans):
         def transform(pts, trans):
             """
             Applies the SE3 transformations, support torch.Tensor and np.ndarry.  Equation: trans_pts = R @ pts + t
@@ -311,6 +291,7 @@ class TurboRegGPU:
             else:
                 trans_pts = trans[:3, :3] @ pts.T + trans[:3, 3:4]
                 return trans_pts.T
+
         # build the ground truth label
         frag1 = src_keypts[corr[:, 0]]
         frag2 = tgt_keypts[corr[:, 1]]
@@ -320,15 +301,16 @@ class TurboRegGPU:
         labels = (distance < self.tau_inlier)
         return labels
 
-    def get_corr(self,src_desc,tgt_desc):
+    def get_corr(self, src_desc, tgt_desc):
         distance = torch.sqrt(2 - 2 * (src_desc @ tgt_desc.T) + 1e-6)
         source_idx = torch.argmin(distance, axis=1)
         use_mutual = True
         if use_mutual:
             target_idx = torch.argmin(distance, axis=0)
             mutual_nearest = (target_idx[source_idx] == torch.arange(source_idx.shape[0]))
-            corr = torch.concatenate([torch.where(mutual_nearest == 1)[0][:, None], source_idx[mutual_nearest][:, None]],
-                                  axis=-1)
+            corr = torch.concatenate(
+                [torch.where(mutual_nearest == 1)[0][:, None], source_idx[mutual_nearest][:, None]],
+                axis=-1)
         else:
             corr = torch.concatenate([torch.arange(source_idx.shape[0])[:, None], source_idx[:, None]], axis=-1)
 
