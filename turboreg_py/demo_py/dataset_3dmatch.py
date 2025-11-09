@@ -137,7 +137,9 @@ class TDMatchFCGFAndFPFHDataset:
             feature_kpts_src = src_npz['feature']
             feature_kpts_dst = dst_npz['feature']
 
-            cal_corr,cal_lable = self.get_corr_k_num(pair_info["src_npz_file"], pair_info["dst_npz_file"], trans_gt)
+            cal_corr,cal_lable = self.get_corr(pair_info["src_npz_file"], pair_info["dst_npz_file"], trans_gt)
+            corr_ind = cal_corr
+            label = cal_lable
         return {
             "corr_kpts_src": corr_kpts_src,
             "corr_kpts_dst": corr_kpts_dst,
