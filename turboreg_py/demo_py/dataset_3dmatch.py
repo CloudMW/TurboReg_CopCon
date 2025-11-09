@@ -139,6 +139,9 @@ class TDMatchFCGFAndFPFHDataset:
 
             cal_corr,cal_lable = self.get_corr(pair_info["src_npz_file"], pair_info["dst_npz_file"], trans_gt)
             corr_ind = cal_corr
+            corr_kpts_src = kpts_src[corr_ind[:,0],:]
+            corr_kpts_dst = kpts_dst[corr_ind[:,1],:]
+
             label = cal_lable
         return {
             "corr_kpts_src": corr_kpts_src,
@@ -200,7 +203,7 @@ class TDMatchFCGFAndFPFHDataset:
         # construct the correspondence set by mutual nn in feature space.
         distance = np.sqrt(2 - 2 * (src_desc @ tgt_desc.T) + 1e-6)
         source_idx = np.argmin(distance, axis=1)
-        use_mutual = True
+        use_mutual = False
         if use_mutual:
             target_idx = np.argmin(distance, axis=0)
             mutual_nearest = (target_idx[source_idx] == np.arange(source_idx.shape[0]))

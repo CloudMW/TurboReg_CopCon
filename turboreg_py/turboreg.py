@@ -101,8 +101,8 @@ class TurboRegGPU:
         #
         # ## keypoints select
         # from turboreg_py.keypoint import get_keypoint_from_scores
-        # src_keypoint_index = get_keypoint_from_scores(kpts_src, feature_kpts_src,k=kpts_src.shape[0]//10)
-        # tgt_keypoint_index = get_keypoint_from_scores(kpts_dst, feature_kpts_dst, k=kpts_dst.shape[0]//10)
+        # src_keypoint_index = get_keypoint_from_scores(kpts_src, feature_kpts_src,k=kpts_src.shape[0]//5)
+        # tgt_keypoint_index = get_keypoint_from_scores(kpts_dst, feature_kpts_dst, k=kpts_dst.shape[0]//5)
         # src_keypoint = kpts_src[src_keypoint_index]
         # tgt_keypoint = kpts_dst[tgt_keypoint_index]
         # src_keypoint_feature = feature_kpts_src[src_keypoint_index]
@@ -111,7 +111,9 @@ class TurboRegGPU:
         # labels = self.inlier_ratio(src_keypoint,tgt_keypoint,corr,trans_gt)
         # inlier_ratio = labels.float().sum() / labels.size(0)
         # print(f'inlier_ratio: {inlier_ratio.item():.4f}')
-
+        # corr_kpts_src = src_keypoint[corr[:,0]]
+        # corr_kpts_dst = tgt_keypoint[corr[:,1]]
+        #
 
 
 
@@ -162,7 +164,8 @@ class TurboRegGPU:
         N_node = SC2.size(0)
         SC2_up = torch.triu(SC2, diagonal=1)  # Upper triangular
         flat_SC2_up = SC2_up.flatten()
-        scores_topk, idx_topk = torch.topk(flat_SC2_up, self.num_pivot)
+        num_pivot = min(self.num_pivot, corr_kpts_src.size(0) * (corr_kpts_src.size(0) - 1) // 2)
+        scores_topk, idx_topk = torch.topk(flat_SC2_up,num_pivot)
 
         # Convert flat indices to 2D indices
         pivots = torch.stack([
@@ -323,13 +326,13 @@ class TurboRegGPU:
     def get_corr(self,src_desc,tgt_desc):
         distance = torch.sqrt(2 - 2 * (src_desc @ tgt_desc.T) + 1e-6)
         source_idx = torch.argmin(distance, axis=1)
-        use_mutual = True
+        use_mutual = False
         if use_mutual:
             target_idx = torch.argmin(distance, axis=0)
-            mutual_nearest = (target_idx[source_idx] == torch.arange(source_idx.shape[0]))
+            mutual_nearest = (target_idx[source_idx] == torch.arange(source_idx.shape[0]).to(source_idx.device))
             corr = torch.concatenate([torch.where(mutual_nearest == 1)[0][:, None], source_idx[mutual_nearest][:, None]],
                                   axis=-1)
         else:
-            corr = torch.concatenate([torch.arange(source_idx.shape[0])[:, None], source_idx[:, None]], axis=-1)
+            corr = torch.concatenate([torch.arange(source_idx.shape[0]).to(source_idx.device)[:, None], source_idx[:, None]], axis=-1)
 
         return corr

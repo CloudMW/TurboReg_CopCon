@@ -90,10 +90,8 @@ class TurboRegPlus:
             RigidTransform object
         """
         # Control the number of keypoints
-        N_node = min(corr_kpts_src.size(0), self.max_N)
-        if N_node < corr_kpts_src.size(0):
-            corr_kpts_src = corr_kpts_src[:N_node]
-            corr_kpts_dst = corr_kpts_dst[:N_node]
+
+
 
         labels_o = self.inlier_ratio(kpts_src, kpts_dst, corr_ind, trans_gt)
         inlier_ratio_o = labels_o.float().sum() / labels_o.size(0)
@@ -105,12 +103,28 @@ class TurboRegPlus:
         tgt_keypoint_index = get_keypoint_from_scores(kpts_dst, feature_kpts_dst, k=kpts_dst.shape[0] // 10)
         src_keypoint = kpts_src[src_keypoint_index]
         tgt_keypoint = kpts_dst[tgt_keypoint_index]
+
+        # 计算 原点 和 目标 点 的重叠率
+
+
+
+
+
         src_keypoint_feature = feature_kpts_src[src_keypoint_index]
         tgt_keypoint_feature = feature_kpts_dst[tgt_keypoint_index]
         corr = self.get_corr(src_keypoint_feature, tgt_keypoint_feature)
         labels = self.inlier_ratio(src_keypoint, tgt_keypoint, corr, trans_gt)
         inlier_ratio = labels.float().sum() / labels.size(0)
         print(f'inlier_ratio: {inlier_ratio.item():.4f}')
+
+
+
+
+
+        N_node = min(corr_kpts_src.size(0), self.max_N)
+        if N_node < corr_kpts_src.size(0):
+            corr_kpts_src = corr_kpts_src[:N_node]
+            corr_kpts_dst = corr_kpts_dst[:N_node]
 
         k_cliques_size = 3
         # Compute C2 (compatibility matrix)
@@ -315,3 +329,5 @@ class TurboRegPlus:
             corr = torch.concatenate([torch.arange(source_idx.shape[0])[:, None], source_idx[:, None]], axis=-1)
 
         return corr
+    def get_overlap_ratio(self, src_keypts, tgt_keypts):
+        pass
