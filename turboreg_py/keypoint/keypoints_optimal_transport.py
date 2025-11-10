@@ -121,9 +121,157 @@ def optimal_transport( src_points,tgt_point,src_feature,tgt_feature):
 
     src_neighbor_feat = src_feature[src_neighbor_idx]  # (N_src, K, C)
     tgt_neighbor_feat = tgt_feature[tgt_neighbor_idx]
-    src_idx,tgt_idx,_,_,_ = find_overlap_points_with_ot(src_points,tgt_point,src_feature,tgt_feature,src_neighbor_feat,tgt_neighbor_feat,num_iters = 20)
-    return src_idx,tgt_idx
+    result= find_overlap_points_with_ot_mutual(src_points,tgt_point,src_feature,tgt_feature,src_neighbor_feat,tgt_neighbor_feat,num_iters = 20)
+    src_idx = result['indices_A']
+    tgt_idx = result['indices_B']
+    src_score = result['scores_A']
+    tgt_score = result['scores_B']
+    return src_score,tgt_score
 
+
+def find_overlap_points_with_ot_mutual(points_A, points_B, FA, FB, FA_neighbor, FB_neighbor,
+                                k_overlap=500, num_iters=100, temperature=0.05,
+                                bidirectional_threshold=0.1):
+    """
+    基于邻域特征、最优传输和双向一致性约束的点云重叠检测
+
+    参数:
+        points_A: [M, 3] 点云A的坐标
+        points_B: [N, 3] 点云B的坐标
+        FA: [M, 32] 点云A的特征
+        FB: [N, 32] 点云B的特征
+        FA_neighbor: [M, D, 32] 点云A每个点的D个邻域点特征
+        FB_neighbor: [N, D, 32] 点云B每个点的D个邻域点特征
+        k_overlap: 期望保留的重叠点数量
+        num_iters: Sinkhorn迭代次数
+        temperature: 温度参数，控制匹配的软硬程度
+        bidirectional_threshold: 双向一致性阈值（循环距离）
+
+    返回:
+        overlap_A: [K1, 3] 点云A中重叠概率高的点
+        overlap_B: [K2, 3] 点云B中重叠概率高的点
+        scores_A: [K1] A中每个重叠点的得分
+        scores_B: [K2] B中每个重叠点的得分
+        mutual_matches: [K, 2] 互相匹配的点对索引
+    """
+    M, D, feat_dim = FA_neighbor.shape
+    N = FB_neighbor.shape[0]
+    device = FA.device
+
+    # 步骤1: 聚合邻域特征，构建上下文描述符
+    FA_center = FA.unsqueeze(1)  # [M, 1, 32]
+    FB_center = FB.unsqueeze(1)  # [N, 1, 32]
+
+    # 计算中心点与邻域的注意力权重
+    attn_A = torch.sum(FA_center * FA_neighbor, dim=-1)  # [M, D]
+    attn_A = F.softmax(attn_A / (feat_dim ** 0.5), dim=-1)  # [M, D]
+
+    attn_B = torch.sum(FB_center * FB_neighbor, dim=-1)  # [N, D]
+    attn_B = F.softmax(attn_B / (feat_dim ** 0.5), dim=-1)  # [N, D]
+
+    # 加权聚合邻域特征
+    FA_context = torch.sum(attn_A.unsqueeze(-1) * FA_neighbor, dim=1)  # [M, 32]
+    FB_context = torch.sum(attn_B.unsqueeze(-1) * FB_neighbor, dim=1)  # [N, 32]
+
+    # 拼接中心特征和上下文特征
+    FA_enhanced = torch.cat([FA, FA_context], dim=-1)  # [M, 64]
+    FB_enhanced = torch.cat([FB, FB_context], dim=-1)  # [N, 64]
+
+    # L2归一化
+    FA_enhanced = F.normalize(FA_enhanced, p=2, dim=-1)
+    FB_enhanced = F.normalize(FB_enhanced, p=2, dim=-1)
+
+    # 步骤2: 计算成本矩阵
+    similarity = torch.matmul(FA_enhanced, FB_enhanced.t())  # [M, N]
+    cost_matrix = 1.0 - similarity  # [M, N]
+
+    # 步骤3: Sinkhorn最优传输
+    log_P = -cost_matrix / temperature  # [M, N]
+
+    for _ in range(num_iters):
+        log_P = log_P - torch.logsumexp(log_P, dim=1, keepdim=True)
+        log_P = log_P - torch.logsumexp(log_P, dim=0, keepdim=True)
+
+    P = torch.exp(log_P)  # [M, N] 传输矩阵
+
+    # 步骤4: 双向一致性检查
+    # A->B: 对于A中每个点，找到B中最匹配的点
+    match_A_to_B = torch.argmax(P, dim=1)  # [M] A中每个点最匹配的B中的点
+    conf_A_to_B = torch.max(P, dim=1)[0]  # [M] 匹配置信度
+
+    # B->A: 对于B中每个点，找到A中最匹配的点
+    match_B_to_A = torch.argmax(P, dim=0)  # [N] B中每个点最匹配的A中的点
+    conf_B_to_A = torch.max(P, dim=0)[0]  # [N] 匹配置信度
+
+    # 双向一致性: 检查循环一致性
+    # 如果 A[i] -> B[j] 且 B[j] -> A[i]，则是互相匹配
+    cycle_consistent_A = torch.zeros(M, dtype=torch.bool, device=device)
+    for i in range(M):
+        j = match_A_to_B[i]
+        if match_B_to_A[j] == i:
+            cycle_consistent_A[i] = True
+
+    cycle_consistent_B = torch.zeros(N, dtype=torch.bool, device=device)
+    for j in range(N):
+        i = match_B_to_A[j]
+        if match_A_to_B[i] == j:
+            cycle_consistent_B[j] = True
+
+    # 步骤5: 计算综合得分（结合传输概率和双向一致性）
+    # 对于A中的点
+    overlap_score_A = conf_A_to_B.clone()
+    # 双向一致的点额外加权
+    overlap_score_A[cycle_consistent_A] *= 1.5
+    # 还可以加上反向置信度
+    for i in range(M):
+        j = match_A_to_B[i]
+        overlap_score_A[i] = (overlap_score_A[i] + conf_B_to_A[j]) / 2.0
+
+    # 对于B中的点
+    overlap_score_B = conf_B_to_A.clone()
+    overlap_score_B[cycle_consistent_B] *= 1.5
+    for j in range(N):
+        i = match_B_to_A[j]
+        overlap_score_B[j] = (overlap_score_B[j] + conf_A_to_B[i]) / 2.0
+
+    # 步骤6: 提取互相匹配的点对
+    mutual_indices_A = torch.where(cycle_consistent_A)[0]
+    mutual_indices_B = match_A_to_B[mutual_indices_A]
+    mutual_matches = torch.stack([mutual_indices_A, mutual_indices_B], dim=1)  # [K, 2]
+
+    # 步骤7: 根据得分筛选重叠点
+    # 优先选择双向一致的点
+    k_A = min((points_A.shape[0]*2)//3, M)
+    topk_A = torch.topk(overlap_score_A, k=k_A)
+    indices_A = topk_A.indices  # [K1]
+    scores_A = overlap_score_A  # [K1]
+
+    k_B = min((points_B.shape[0]*2)//3, N)
+    topk_B = torch.topk(overlap_score_B, k=k_B)
+    indices_B = topk_B.indices  # [K2]
+    scores_B = overlap_score_B # [K2]
+
+    # 提取重叠点云
+    overlap_A = points_A[indices_A]  # [K1, 3]
+    overlap_B = points_B[indices_B]  # [K2, 3]
+
+    # 额外信息：标记哪些是双向一致的
+    is_mutual_A = cycle_consistent_A[indices_A]
+    is_mutual_B = cycle_consistent_B[indices_B]
+
+    return {
+        'overlap_A': overlap_A,
+        'overlap_B': overlap_B,
+        'scores_A': scores_A,
+        'scores_B': scores_B,
+        'indices_A': indices_A,
+        'indices_B': indices_B,
+        'is_mutual_A': is_mutual_A,
+        'is_mutual_B': is_mutual_B,
+        'mutual_matches': mutual_matches,
+        'transport_matrix': P,
+        'num_mutual_matches': len(mutual_matches)
+    }
 import torch.nn.functional as F
 def find_overlap_points_with_ot(points_A, points_B, FA, FB, FA_neighbor, FB_neighbor,
                                 k_overlap=500, num_iters=20, temperature=0.05):

@@ -175,11 +175,11 @@ def visual_by_score(points, scores, point_size: float = 2.0, show: bool = True):
     return pcd, colors_np
 
 
-def get_keypoint_from_scores(points,features,k):
+def get_keypoint_from_scores(points,features):
 
     neighbors_num = 5
     neighbors_idx = neighbors(points,neighbors_num)
     score = detection_scores(neighbors_idx,features)
-    _, topk_idx = torch.topk(score.squeeze(-1), k=k, dim=0, largest=True, sorted=True)
-    return topk_idx
+    # _, topk_idx = torch.topk(score.squeeze(-1), k=k, dim=0, largest=True, sorted=True)
+    return score
     # visual_by_score(points,score)

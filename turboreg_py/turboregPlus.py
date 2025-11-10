@@ -2,6 +2,7 @@
 TurboReg GPU Implementation
 Main registration class for point cloud alignment
 """
+import torch
 
 from .model_selection import ModelSelection, string_to_metric_type
 from .rigid_transform import RigidTransform
@@ -89,25 +90,37 @@ class TurboRegPlus:
         """
         # Control the number of keypoints
 
-        # 计算 原点 和 目标 点 的重叠率
-        src_overlap_ratio_o, dst_overlap_ratio_o =  self.get_overlap_ratio(kpts_src, kpts_dst,trans_gt)
-        print(f"src_overlap orgin : {src_overlap_ratio_o}, dst_overlap origin: {dst_overlap_ratio_o}")
-        labels_o = self.inlier_ratio(kpts_src, kpts_dst, corr_ind, trans_gt)
-        inlier_ratio_o = labels_o.float().sum() / labels_o.size(0)
-        print(f'inlier_ratio origin: {inlier_ratio_o.item():.4f}')
+        # # 计算 原点 和 目标 点 的重叠率
+        # src_overlap_ratio_o, dst_overlap_ratio_o =  self.get_overlap_ratio(kpts_src, kpts_dst,trans_gt)
+        # print(f"src_overlap orgin : {src_overlap_ratio_o}, dst_overlap origin: {dst_overlap_ratio_o}")
+        # corr_ind = self.get_corr(feature_kpts_src, feature_kpts_dst)
+        # labels_o = self.inlier_ratio(kpts_src, kpts_dst, corr_ind, trans_gt)
+        # inlier_ratio_o = labels_o.float().sum() / labels_o.size(0)
+        # print(f'inlier_ratio origin: {inlier_ratio_o.item():.4f}')
 
         ## keypoints select
         from turboreg_py.keypoint.keypoint import get_keypoint_from_scores
         from turboreg_py.keypoint.keypoints_optimal_transport import optimal_transport
+        from turboreg_py.keypoint.keypoint_optional_spatrl_graph import keypoint_spectral_graph
+        src_keypoint_index,tgt_keypoint_index =  keypoint_spectral_graph(kpts_src, kpts_dst, feature_kpts_src, feature_kpts_dst)
         # src_keypoint_index = get_keypoint_from_scores(kpts_src, feature_kpts_src, k=kpts_src.shape[0] // 10)
         # tgt_keypoint_index = get_keypoint_from_scores(kpts_dst, feature_kpts_dst, k=kpts_dst.shape[0] // 10)
-        src_keypoint_index,tgt_keypoint_index = optimal_transport(kpts_src,kpts_dst,feature_kpts_src,feature_kpts_dst)
+        # src_keypoint_index,tgt_keypoint_index = optimal_transport(kpts_src,kpts_dst,feature_kpts_src,feature_kpts_dst)
+        from turboreg_py.keypoint.seed_point import get_seed
+
+
+        from turboreg_py.visualization.visualization_keypoint import visualize_keypoint
+        # visualize_keypoint(kpts_src,kpts_dst,src_keypoint_index,tgt_keypoint_index,trans_gt)
          # = optimal_transport()
+        kpts_src_old = kpts_src
+        kpts_dst_old = kpts_dst
         kpts_src = kpts_src[src_keypoint_index]
         kpts_dst = kpts_dst[tgt_keypoint_index]
 
+
         # 计算 原点 和 目标 点 的重叠率
-        src_overlap_ratio_plus, dst_overlap_ratio_plus = self.get_overlap_ratio(kpts_src, kpts_dst, trans_gt)
+        src_overlap_ratio_plus, _ = self.get_overlap_ratio(kpts_src, kpts_dst_old, trans_gt)
+        _, dst_overlap_ratio_plus = self.get_overlap_ratio(kpts_src_old, kpts_dst, trans_gt)
         print(f"src_overlap plus : {src_overlap_ratio_plus}, dst_overlap plus: {dst_overlap_ratio_plus}")
 
 
@@ -115,13 +128,35 @@ class TurboRegPlus:
 
         src_keypoint_feature = feature_kpts_src[src_keypoint_index]
         tgt_keypoint_feature = feature_kpts_dst[tgt_keypoint_index]
-        corr_ind = self.get_corr(src_keypoint_feature, tgt_keypoint_feature)
-        labels = self.inlier_ratio(kpts_src, kpts_dst, corr_ind, trans_gt)
+        # corr_ind = self.get_corr_k_num(feature_kpts_src, tgt_keypoint_feature)
+        corr_ind = self.get_corr_k_num(feature_kpts_src, tgt_keypoint_feature,True,5)
+        labels = self.inlier_ratio(kpts_src_old, kpts_dst, corr_ind, trans_gt)
         inlier_ratio = labels.float().sum() / labels.size(0)
-        print(f'inlier_ratio: {inlier_ratio.item():.4f}')
+        print(f'inlier_ratio src to tgt: {inlier_ratio.item():.4f}')
+        corr_ind[:,1]=tgt_keypoint_index[corr_ind[:,1]]
 
-        corr_kpts_src = kpts_src[corr_ind[:, 0]]
-        corr_kpts_dst = kpts_dst[corr_ind[:, 1]]
+        # corr_ind = self.get_corr_k_num(feature_kpts_src, tgt_keypoint_feature)
+        corr_ind_tgt_to_src = self.get_corr_k_num(feature_kpts_dst, src_keypoint_feature,True,5)
+        labels = self.inlier_ratio(kpts_src, kpts_dst_old, corr_ind_tgt_to_src[:,[1,0]], trans_gt)
+        inlier_ratio = labels.float().sum() / labels.size(0)
+        print(f'inlier_ratio tgt to src: {inlier_ratio.item():.4f}')
+        corr_ind_tgt_to_src[:,1] = src_keypoint_index[corr_ind_tgt_to_src[:,1]]
+        corr_ind_tgt_to_src = corr_ind_tgt_to_src[:,[1,0]]
+        corr_ind =  torch.concat((corr_ind, corr_ind_tgt_to_src)).unique(dim=0)
+        labels = self.inlier_ratio(kpts_src_old, kpts_dst_old, corr_ind, trans_gt)
+        inlier_ratio = labels.float().sum() / labels.size(0)
+        print(f'inlier_ratio all: {inlier_ratio.item():.4f}')
+        # src_keypoint_feature = feature_kpts_src[src_keypoint_index]
+        # tgt_keypoint_feature = feature_kpts_dst[tgt_keypoint_index]
+        # corr_ind = self.get_corr_k_num(src_keypoint_feature, feature_kpts_dst,True,5)
+        # labels = self.inlier_ratio(kpts_src, kpts_dst_old, corr_ind, trans_gt)
+        # inlier_ratio = labels.float().sum() / labels.size(0)
+        # print(f'inlier_ratio 1tok: {inlier_ratio.item():.4f}')
+
+
+
+        corr_kpts_src = kpts_src_old[corr_ind[:, 0]]
+        corr_kpts_dst = kpts_dst_old[corr_ind[:, 1]]
 
 
         # N_node = min(corr_kpts_src.size(0), self.max_N)
@@ -323,7 +358,7 @@ class TurboRegPlus:
     def get_corr(self, src_desc, tgt_desc):
         distance = torch.sqrt(2 - 2 * (src_desc @ tgt_desc.T) + 1e-6)
         source_idx = torch.argmin(distance, axis=1)
-        use_mutual = False
+        use_mutual = True
         if use_mutual:
             target_idx = torch.argmin(distance, axis=0)
             mutual_nearest = (target_idx[source_idx] == torch.arange(source_idx.shape[0]).to(source_idx.device))
@@ -365,5 +400,106 @@ class TurboRegPlus:
         src_overlap_ratio = (dis_src_2_dst<self.tau_inlier).sum()/(dist_matrix.shape[0])
         dst_overlap_ratio = (dis_dst_2_src<self.tau_inlier).sum()/(dist_matrix.shape[-1])
         return src_overlap_ratio, dst_overlap_ratio
+    # def get_corr_k_num(self,src_desc:torch.Tensor, tgt_desc:torch.Tensor,k=5):
+    #     device = src_desc.device
+    #     dot_product = torch.matmul(src_desc, tgt_desc.T)  # [N, M]：源描述子与目标描述子的点积
+    #     distance = torch.sqrt(2 - 2 * dot_product + 1e-6)  # [N, M]：欧式距离，加1e-6避免sqrt(0)
+    #
+    #     # 3. 对每个源特征点，按距离升序排序，取前k个目标特征点的索引
+    #     _, source_idx = torch.sort(distance, dim=1)  # [N, M]：排序后的目标索引（升序，越小越近）
+    #     source_idx = source_idx[:, :k]  # [N, k]：取前k个近邻的目标索引
+    #     source_idx = source_idx.flatten()  # [N*k,]：展平为1维（对齐原numpy的flatten()）
+    #     use_mutual =True
+    #     # 4. 生成匹配对（corr）：分use_mutual=True/False两种情况
+    #     if use_mutual:
+    #         # 互近邻筛选：找到“源→目标是近邻，且目标→源也是近邻”的匹配对
+    #         _, target_idx = torch.sort(distance, dim=0)  # [M,]：每个目标特征点的最近源特征点索引（axis=0对应源维度）
+    #         target_idx = target_idx[:,:k].flatten()
+    #         # 验证：源→目标的近邻（source_idx）是否也是目标→源的近邻
+    #         # target_idx[source_idx]：每个“源→目标”对应的“目标→源”索引
+    #         # np.arange(source_idx.shape[0]) → PyTorch对应torch.arange(source_idx.numel(), device=device)
+    #         mutual_nearest = (target_idx[source_idx] == torch.arange(source_idx.numel(), device=device))
+    #
+    #         # 提取互近邻的匹配对：[源索引, 目标索引]
+    #         # 原numpy的np.where(mutual_nearest == 1)[0] → PyTorch的torch.nonzero(mutual_nearest, as_tuple=True)[0]
+    #         src_corr_idx = torch.nonzero(mutual_nearest, as_tuple=True)[0]  # 源侧匹配索引（对应source_idx的位置）
+    #         tgt_corr_idx = source_idx[mutual_nearest]  # 目标侧匹配索引
+    #
+    #         # 拼接为[N, 2]的匹配对矩阵
+    #         corr = torch.cat([
+    #             src_corr_idx.unsqueeze(1),  # [K, 1]
+    #             tgt_corr_idx.unsqueeze(1)  # [K, 1]
+    #         ], dim=1)
+    #
+    #     else:
+    #         # 不筛选：每个源特征点对应k个目标近邻，生成[N*k, 2]的匹配对
+    #         # 原numpy的np.repeat(np.arange(src_keypts.shape[0])[:, None], k, axis=0)
+    #         src_corr_idx = torch.arange(src_desc.shape[0], device=device)  # [N,]：源特征点索引
+    #         src_corr_idx = src_corr_idx.unsqueeze(1).repeat(1, k).flatten()  # [N*k,]：每个源索引重复k次
+    #
+    #         # 拼接为[N*k, 2]的匹配对矩阵
+    #         corr = torch.cat([
+    #             src_corr_idx.unsqueeze(1),  # [N*k, 1]
+    #             source_idx.unsqueeze(1)  # [N*k, 1]
+    #         ], dim=1)
+    #
+    #     # 可选：转回numpy（若需要和原代码输出格式一致）
+    #     # corr = corr.cpu().numpy()
+    #
+    #     return corr
 
-        pass
+    def get_corr_k_num(self, src_desc: torch.Tensor, tgt_desc: torch.Tensor, use_mutual: bool = True, k: int = 5):
+        """
+        Args:
+            src_desc: [M, F]
+            tgt_desc: [N, F]
+            use_mutual: 是否使用互相匹配策略
+            k: 当 use_mutual=True 时，检查目标的前 k 个最近源点中是否包含源点 J
+
+        Returns:
+            corr: [K, 2] (K == M when use_mutual=False；当 use_mutual=True 时 K<=M)
+                  每行为 [src_idx, tgt_idx]
+        """
+        device = src_desc.device
+        M = src_desc.shape[0]
+        N = tgt_desc.shape[0]
+        eps = 1e-8
+
+        # 直接用点积构造距离：distance = sqrt(2 - 2 * dot)（适用于归一化描述子）
+        dot = torch.matmul(src_desc, tgt_desc.t())  # [M, N]
+        dist = torch.sqrt(torch.clamp(2.0 - 2.0 * dot, min=eps))  # [M, N]
+
+        # 对每个源，找到最近的目标索引 i_j
+        nearest_tgt = torch.argmin(dist, dim=1)  # [M]
+
+        if not use_mutual:
+            src_idx = torch.arange(M, device=device)
+            corr = torch.stack([src_idx, nearest_tgt], dim=1)  # [M, 2]
+            return corr
+
+        # use_mutual == True
+        # 限制 k 不超过源点数
+        k = max(1, min(k, M))
+
+        # 对每个目标（按列）找到按距离升序的源点索引
+        _, src_sorted_per_tgt = torch.sort(dist, dim=0)  # [M, N]
+        topk_src_per_tgt = src_sorted_per_tgt[:k, :]  # [k, N]
+
+        # 构建一个布尔矩阵 topk_mask[s, t] 表示源 s 是否在目标 t 的前 k 个最近源中
+        topk_rows = topk_src_per_tgt.reshape(-1)  # [k*N]
+        topk_cols = torch.arange(N, device=device).unsqueeze(0).repeat(k, 1).reshape(-1)  # [k*N]
+        topk_mask = torch.zeros((M, N), dtype=torch.bool, device=device)
+        topk_mask[topk_rows, topk_cols] = True
+
+        # 对每个源 j，检查其最近目标 i_j 是否把 j 包含在该目标的前 k 源中
+        src_indices = torch.arange(M, device=device)
+        mutual_mask = topk_mask[src_indices, nearest_tgt]  # [M] bool
+
+        # 筛选满足互近邻条件的配对
+        matched_src = src_indices[mutual_mask]
+        matched_tgt = nearest_tgt[mutual_mask]
+        if matched_src.numel() == 0:
+            return torch.empty((0, 2), dtype=torch.long, device=device)
+        corr = torch.stack([matched_src, matched_tgt], dim=1)  # [K, 2]
+
+        return corr
