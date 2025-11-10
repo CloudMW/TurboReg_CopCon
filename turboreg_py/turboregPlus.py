@@ -3,11 +3,9 @@ TurboReg GPU Implementation
 Main registration class for point cloud alignment
 """
 
-import torch
 from .model_selection import ModelSelection, string_to_metric_type
 from .rigid_transform import RigidTransform
 from .core_turboreg import verification_v2_metric, post_refinement
-from .utils_pcr import coplanar_constraint, coplanar_constraint_more_points
 from turboreg_py.demo_py.utils_pcr import *
 
 
@@ -91,41 +89,49 @@ class TurboRegPlus:
         """
         # Control the number of keypoints
 
-
-
+        # 计算 原点 和 目标 点 的重叠率
+        src_overlap_ratio_o, dst_overlap_ratio_o =  self.get_overlap_ratio(kpts_src, kpts_dst,trans_gt)
+        print(f"src_overlap orgin : {src_overlap_ratio_o}, dst_overlap origin: {dst_overlap_ratio_o}")
         labels_o = self.inlier_ratio(kpts_src, kpts_dst, corr_ind, trans_gt)
         inlier_ratio_o = labels_o.float().sum() / labels_o.size(0)
         print(f'inlier_ratio origin: {inlier_ratio_o.item():.4f}')
 
         ## keypoints select
-        from turboreg_py.keypoint import get_keypoint_from_scores
-        src_keypoint_index = get_keypoint_from_scores(kpts_src, feature_kpts_src, k=kpts_src.shape[0] // 10)
-        tgt_keypoint_index = get_keypoint_from_scores(kpts_dst, feature_kpts_dst, k=kpts_dst.shape[0] // 10)
-        src_keypoint = kpts_src[src_keypoint_index]
-        tgt_keypoint = kpts_dst[tgt_keypoint_index]
+        from turboreg_py.keypoint.keypoint import get_keypoint_from_scores
+        from turboreg_py.keypoint.keypoints_optimal_transport import optimal_transport
+        # src_keypoint_index = get_keypoint_from_scores(kpts_src, feature_kpts_src, k=kpts_src.shape[0] // 10)
+        # tgt_keypoint_index = get_keypoint_from_scores(kpts_dst, feature_kpts_dst, k=kpts_dst.shape[0] // 10)
+        src_keypoint_index,tgt_keypoint_index = optimal_transport(kpts_src,kpts_dst,feature_kpts_src,feature_kpts_dst)
+         # = optimal_transport()
+        kpts_src = kpts_src[src_keypoint_index]
+        kpts_dst = kpts_dst[tgt_keypoint_index]
 
         # 计算 原点 和 目标 点 的重叠率
-
+        src_overlap_ratio_plus, dst_overlap_ratio_plus = self.get_overlap_ratio(kpts_src, kpts_dst, trans_gt)
+        print(f"src_overlap plus : {src_overlap_ratio_plus}, dst_overlap plus: {dst_overlap_ratio_plus}")
 
 
 
 
         src_keypoint_feature = feature_kpts_src[src_keypoint_index]
         tgt_keypoint_feature = feature_kpts_dst[tgt_keypoint_index]
-        corr = self.get_corr(src_keypoint_feature, tgt_keypoint_feature)
-        labels = self.inlier_ratio(src_keypoint, tgt_keypoint, corr, trans_gt)
+        corr_ind = self.get_corr(src_keypoint_feature, tgt_keypoint_feature)
+        labels = self.inlier_ratio(kpts_src, kpts_dst, corr_ind, trans_gt)
         inlier_ratio = labels.float().sum() / labels.size(0)
         print(f'inlier_ratio: {inlier_ratio.item():.4f}')
 
+        corr_kpts_src = kpts_src[corr_ind[:, 0]]
+        corr_kpts_dst = kpts_dst[corr_ind[:, 1]]
 
 
-
-
+        # N_node = min(corr_kpts_src.size(0), self.max_N)
+        # if N_node < corr_kpts_src.size(0):
+        #     corr_kpts_src = corr_kpts_src[:N_node]
+        #     corr_kpts_dst = corr_kpts_dst[:N_node]
         N_node = min(corr_kpts_src.size(0), self.max_N)
         if N_node < corr_kpts_src.size(0):
             corr_kpts_src = corr_kpts_src[:N_node]
             corr_kpts_dst = corr_kpts_dst[:N_node]
-
         k_cliques_size = 3
         # Compute C2 (compatibility matrix)
         src_dist = torch.norm(
@@ -165,7 +171,7 @@ class TurboRegPlus:
         N_node = SC2.size(0)
         SC2_up = torch.triu(SC2, diagonal=1)  # Upper triangular
         flat_SC2_up = SC2_up.flatten()
-        scores_topk, idx_topk = torch.topk(flat_SC2_up, self.num_pivot)
+        scores_topk, idx_topk = torch.topk(flat_SC2_up,  min(self.num_pivot//3, corr_kpts_src.size(0) * (corr_kpts_src.size(0) - 1) // 2))
 
         # Convert flat indices to 2D indices
         pivots = torch.stack([
@@ -222,7 +228,6 @@ class TurboRegPlus:
         #     k=200
         # )
 
-        from turboreg_py.voexl_test import visualize_point_cloud_with_voxel_grid_lines
         # visualize_point_cloud_with_voxel_grid_lines(src_cloud)
         # cliques_tensor = coplanar_constraint(
         #     cliques_tensor,
@@ -271,7 +276,7 @@ class TurboRegPlus:
             inlier_threshold=self.tau_inlier
         )
 
-        vis = True
+        vis = False
         if vis:
             refined_trans_numpy = refined_trans.cpu().numpy()
             trans_gt_numpy = trans_gt.cpu().numpy()
@@ -318,16 +323,47 @@ class TurboRegPlus:
     def get_corr(self, src_desc, tgt_desc):
         distance = torch.sqrt(2 - 2 * (src_desc @ tgt_desc.T) + 1e-6)
         source_idx = torch.argmin(distance, axis=1)
-        use_mutual = True
+        use_mutual = False
         if use_mutual:
             target_idx = torch.argmin(distance, axis=0)
-            mutual_nearest = (target_idx[source_idx] == torch.arange(source_idx.shape[0]))
+            mutual_nearest = (target_idx[source_idx] == torch.arange(source_idx.shape[0]).to(source_idx.device))
             corr = torch.concatenate(
                 [torch.where(mutual_nearest == 1)[0][:, None], source_idx[mutual_nearest][:, None]],
                 axis=-1)
         else:
-            corr = torch.concatenate([torch.arange(source_idx.shape[0])[:, None], source_idx[:, None]], axis=-1)
+            corr = torch.concatenate([torch.arange(source_idx.shape[0]).to(source_idx.device)[:, None], source_idx[:, None]], axis=-1)
 
         return corr
-    def get_overlap_ratio(self, src_keypts, tgt_keypts):
+    def get_overlap_ratio(self, src_keypts, tgt_keypts,gt_trans):
+        def transform(pts, trans):
+            """
+            Applies the SE3 transformations, support torch.Tensor and np.ndarry.  Equation: trans_pts = R @ pts + t
+            Input
+                - pts: [num_pts, 3] or [bs, num_pts, 3], pts to be transformed
+                - trans: [4, 4] or [bs, 4, 4], SE3 transformation matrix
+            Output
+                - pts: [num_pts, 3] or [bs, num_pts, 3] transformed pts
+            """
+            if len(pts.shape) == 3:
+                trans_pts = trans[:, :3, :3] @ pts.permute(0, 2, 1) + trans[:, :3, 3:4]
+                return trans_pts.permute(0, 2, 1)
+            else:
+                trans_pts = trans[:3, :3] @ pts.T + trans[:3, 3:4]
+                return trans_pts.T
+
+        # build the ground truth label
+        frag1 = src_keypts
+        frag2 = tgt_keypts
+        frag1_warp = transform(frag1, gt_trans)
+        # distance = torch.sqrt(torch.sum(torch.power(frag1_warp - frag2, 2), axis=1))
+        frag1_warp_expanded = frag1_warp.unsqueeze(1)
+        frag2_expanded = frag2.unsqueeze(0)
+        diff = frag1_warp_expanded - frag2_expanded  # [M, N, 3]
+        dist_matrix = torch.norm(diff, p=2, dim=2)
+        dis_src_2_dst = dist_matrix.min(dim=-1)[0]
+        dis_dst_2_src = dist_matrix.min(dim=0)[0]
+        src_overlap_ratio = (dis_src_2_dst<self.tau_inlier).sum()/(dist_matrix.shape[0])
+        dst_overlap_ratio = (dis_dst_2_src<self.tau_inlier).sum()/(dist_matrix.shape[-1])
+        return src_overlap_ratio, dst_overlap_ratio
+
         pass

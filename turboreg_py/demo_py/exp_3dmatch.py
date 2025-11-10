@@ -190,8 +190,8 @@ def main(device):
         trans_pred_torch = reger.run_reg(corr_kpts_src, corr_kpts_dst,trans_gt,src_cloud,dst_cloud,kpts_src,kpts_dst,corr_ind,feature_kpts_src,feature_kpts_dst )
         T_reg = (time.time() - t1) * 1000
         trans_pred = trans_pred_torch.cpu().numpy()
-        trans_gt = trans_gt.cpu().numpy()
-        rre, rte = compute_transformation_error(trans_gt, trans_pred)
+        trans_gt_numpy = trans_gt.cpu().numpy()
+        rre, rte = compute_transformation_error(trans_gt_numpy, trans_pred)
         is_succ = (rre < 15) & (rte < 0.3)
         print("TurboReg Result: RRE={:.6f}, RTE={:.6f}, Success={}".format(rre, rte, is_succ))
 
@@ -202,8 +202,8 @@ def main(device):
                                          kpts_dst, corr_ind, feature_kpts_src, feature_kpts_dst)
         T_reg_plus = (time.time() - t_regor_plus) * 1000
         trans_pred_plus = trans_pred_torch_plus.cpu().numpy()
-        trans_gt = trans_gt.cpu().numpy()
-        rre, rte = compute_transformation_error(trans_gt, trans_pred_plus)
+        trans_gt_numpy = trans_gt.cpu().numpy()
+        rre, rte = compute_transformation_error(trans_gt_numpy, trans_pred_plus)
         is_succ = (rre < 15) & (rte < 0.3)
         print("TurboRegPlus Result: RRE={:.6f}, RTE={:.6f}, Success={}".format(rre, rte, is_succ))
 
