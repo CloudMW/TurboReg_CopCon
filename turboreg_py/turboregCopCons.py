@@ -2,14 +2,15 @@
 TurboReg GPU Implementation
 Main registration class for point cloud alignment
 """
-
 import torch
+
 from .model_selection import ModelSelection, string_to_metric_type
 from .rigid_transform import RigidTransform
 from .core_turboreg import verification_v2_metric, post_refinement
-from .utils_pcr import coplanar_constraint, coplanar_constraint_more_points
 from turboreg_py.demo_py.utils_pcr import *
-class TurboRegGPU:
+
+
+class TurboRegCopCons:
     """
     TurboReg GPU accelerated point cloud registration
     Fast and robust registration using clique-based hypothesis generation
@@ -98,28 +99,16 @@ class TurboRegGPU:
         labels_o = self.inlier_ratio(kpts_src, kpts_dst, corr_ind, trans_gt)
         inlier_ratio_o = labels_o.float().sum() / labels_o.size(0)
         print(f'inlier_ratio origin: {inlier_ratio_o.item():.4f}')
-        #
-        # ## keypoints select
-        # from turboreg_py.keypoint import get_keypoint_from_scores
-        # src_keypoint_index = get_keypoint_from_scores(kpts_src, feature_kpts_src,k=kpts_src.shape[0]//5)
-        # tgt_keypoint_index = get_keypoint_from_scores(kpts_dst, feature_kpts_dst, k=kpts_dst.shape[0]//5)
-        # src_keypoint = kpts_src[src_keypoint_index]
-        # tgt_keypoint = kpts_dst[tgt_keypoint_index]
-        # src_keypoint_feature = feature_kpts_src[src_keypoint_index]
-        # tgt_keypoint_feature = feature_kpts_dst[tgt_keypoint_index]
-        # corr = self.get_corr(src_keypoint_feature,tgt_keypoint_feature)
-        # labels = self.inlier_ratio(src_keypoint,tgt_keypoint,corr,trans_gt)
-        # inlier_ratio = labels.float().sum() / labels.size(0)
-        # print(f'inlier_ratio: {inlier_ratio.item():.4f}')
-        # corr_kpts_src = src_keypoint[corr[:,0]]
-        # corr_kpts_dst = tgt_keypoint[corr[:,1]]
+
+
+
+        #得到共面约束矩阵
+        from turboreg_py.module.coplanar_consist import coplanar_consists
+        normal_copcons = coplanar_consists(kpts_src,kpts_dst,corr_ind)
+
+
         #
 
-
-
-
-
-        k_cliques_size = 3
         # Compute C2 (compatibility matrix)
         src_dist = torch.norm(
             corr_kpts_src.unsqueeze(1) - corr_kpts_src.unsqueeze(0),
@@ -129,6 +118,8 @@ class TurboRegGPU:
             corr_kpts_dst.unsqueeze(1) - corr_kpts_dst.unsqueeze(0),
             p=2, dim=-1
         )  # [N, N]
+
+
 
 
 
@@ -151,7 +142,7 @@ class TurboRegGPU:
         # Align with C++: SC2 = (C2 @ C2) * C2 (Hadamard product with C2)
         SC2 = torch.matmul(C2, C2) * C2
 
-
+        SC2 = SC2*normal_copcons
         # from turboreg_py.seed_point import cal_leading_eigenvector,pick_seeds
         # SC_dist_thre = 0.1
         # SC_measure = torch.clamp(1.0 - cross_dist ** 2 / SC_dist_thre ** 2, min=0)

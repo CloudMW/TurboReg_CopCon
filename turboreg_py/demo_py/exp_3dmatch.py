@@ -11,6 +11,7 @@ from turboreg_py.demo_py.dataset_3dmatch import TDMatchFCGFAndFPFHDataset
 from turboreg_py.demo_py.utils_pcr import compute_transformation_error, numpy_to_torch32, numpy_to_torchint32
 from turboreg_py import TurboRegGPU
 from turboreg_py import TurboRegPlus
+from turboreg_py import TurboRegCopCons
 
 @dataclass
 class Args:
@@ -142,7 +143,15 @@ def main(device):
         args.tau_inlier,
         args.metric_str
     )
-    reger_plus = TurboRegPlus(
+    # reger_plus = TurboRegPlus(
+    #     args.max_N,
+    #     args.tau_length_consis,
+    #     args.num_pivot,
+    #     args.radiu_nms,
+    #     args.tau_inlier,
+    #     args.metric_str
+    # )
+    reger_copcons = TurboRegCopCons(
         args.max_N,
         args.tau_length_consis,
         args.num_pivot,
@@ -150,7 +159,6 @@ def main(device):
         args.tau_inlier,
         args.metric_str
     )
-
     ds = TDMatchFCGFAndFPFHDataset(base_dir=args.dir_dataset, dataset_type=processed_dataname, descriptor_type=args.desc)
 
     # run error
@@ -196,17 +204,28 @@ def main(device):
         print("TurboReg Result: RRE={:.6f}, RTE={:.6f}, Success={}".format(rre, rte, is_succ))
 
 
-        # Run TurboRegPlus
-        t_regor_plus = time.time()
-        trans_pred_torch_plus = reger_plus.run_reg(corr_kpts_src, corr_kpts_dst, trans_gt, src_cloud, dst_cloud, kpts_src,
-                                         kpts_dst, corr_ind, feature_kpts_src, feature_kpts_dst)
-        T_reg_plus = (time.time() - t_regor_plus) * 1000
+        # # Run TurboRegPlus
+        # t_regor_plus = time.time()
+        # trans_pred_torch_plus = reger_plus.run_reg(corr_kpts_src, corr_kpts_dst, trans_gt, src_cloud, dst_cloud, kpts_src,
+        #                                  kpts_dst, corr_ind, feature_kpts_src, feature_kpts_dst)
+        # T_reg_plus = (time.time() - t_regor_plus) * 1000
+        # trans_pred_plus = trans_pred_torch_plus.cpu().numpy()
+        # trans_gt_numpy = trans_gt.cpu().numpy()
+        # rre, rte = compute_transformation_error(trans_gt_numpy, trans_pred_plus)
+        # is_succ = (rre < 15) & (rte < 0.3)
+        # print("TurboRegPlus Result: RRE={:.6f}, RTE={:.6f}, Success={}".format(rre, rte, is_succ))
+
+        # Run TurboRegCopCons
+        t_regor_copcons = time.time()
+        trans_pred_torch_plus = reger_copcons.run_reg(corr_kpts_src, corr_kpts_dst, trans_gt, src_cloud, dst_cloud,
+                                                   kpts_src,
+                                                   kpts_dst, corr_ind, feature_kpts_src, feature_kpts_dst)
+        T_reg_copcons = (time.time() - t_regor_copcons) * 1000
         trans_pred_plus = trans_pred_torch_plus.cpu().numpy()
         trans_gt_numpy = trans_gt.cpu().numpy()
         rre, rte = compute_transformation_error(trans_gt_numpy, trans_pred_plus)
         is_succ = (rre < 15) & (rte < 0.3)
-        print("TurboRegPlus Result: RRE={:.6f}, RTE={:.6f}, Success={}".format(rre, rte, is_succ))
-
+        print("TurboRegCopCons Result: RRE={:.6f}, RTE={:.6f}, Success={}".format(rre, rte, is_succ))
         # save result: append to all_result
         if not args.rerun_errors:
             _append_result_file(all_result_file, i, float(rre), float(rte), trans_pred)

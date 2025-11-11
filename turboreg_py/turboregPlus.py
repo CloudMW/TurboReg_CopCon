@@ -90,23 +90,46 @@ class TurboRegPlus:
         """
         # Control the number of keypoints
 
-        # # 计算 原点 和 目标 点 的重叠率
-        # src_overlap_ratio_o, dst_overlap_ratio_o =  self.get_overlap_ratio(kpts_src, kpts_dst,trans_gt)
-        # print(f"src_overlap orgin : {src_overlap_ratio_o}, dst_overlap origin: {dst_overlap_ratio_o}")
-        # corr_ind = self.get_corr(feature_kpts_src, feature_kpts_dst)
-        # labels_o = self.inlier_ratio(kpts_src, kpts_dst, corr_ind, trans_gt)
-        # inlier_ratio_o = labels_o.float().sum() / labels_o.size(0)
-        # print(f'inlier_ratio origin: {inlier_ratio_o.item():.4f}')
+        # regor
+        from turboreg_py.regor.regor import Regenerator
+        regenerator = Regenerator()
+        src_keypts_corr_final, tgt_keypts_corr_final, pred_trans = regenerator.regenerate(
+            corr_kpts_src.unsqueeze(0),
+            corr_kpts_dst.unsqueeze(0),
+            kpts_src.unsqueeze(0),
+            kpts_dst.unsqueeze(0),
+            feature_kpts_src.unsqueeze(0),
+            feature_kpts_dst.unsqueeze(0),
+            trans_gt.unsqueeze(0),
+            knn_num=100,
+            sampling_num=100
+        )
 
+        src_keypts_corr_final, tgt_keypts_corr_final, pred_trans = regenerator.regenerate(
+            src_keypts_corr_final,
+            tgt_keypts_corr_final,
+            kpts_src.unsqueeze(0),
+            kpts_dst.unsqueeze(0),
+            feature_kpts_src.unsqueeze(0),
+            feature_kpts_dst.unsqueeze(0),
+            trans_gt.unsqueeze(0),
+            knn_num=20,
+            sampling_num=500
+        )
+
+
+        labels_regor = self.inlier_ratio_by_point(src_keypts_corr_final[0], tgt_keypts_corr_final[0], corr_ind, trans_gt)
+        inlier_ratio_regor = labels_regor.float().sum() / labels_regor.size(0)
+        print(f'inlier_ratio regior: {inlier_ratio_regor.item():.4f} regor num : {src_keypts_corr_final.size(1)}')
+        # # 计算 原点 和 目标 点 的重叠率
+
+        """
+        
         ## keypoints select
         from turboreg_py.keypoint.keypoint import get_keypoint_from_scores
         from turboreg_py.keypoint.keypoints_optimal_transport import optimal_transport
         from turboreg_py.keypoint.keypoint_optional_spatrl_graph import keypoint_spectral_graph
         src_keypoint_index,tgt_keypoint_index =  keypoint_spectral_graph(kpts_src, kpts_dst, feature_kpts_src, feature_kpts_dst)
-        # src_keypoint_index = get_keypoint_from_scores(kpts_src, feature_kpts_src, k=kpts_src.shape[0] // 10)
-        # tgt_keypoint_index = get_keypoint_from_scores(kpts_dst, feature_kpts_dst, k=kpts_dst.shape[0] // 10)
-        # src_keypoint_index,tgt_keypoint_index = optimal_transport(kpts_src,kpts_dst,feature_kpts_src,feature_kpts_dst)
-        from turboreg_py.keypoint.seed_point import get_seed
 
 
         from turboreg_py.visualization.visualization_keypoint import visualize_keypoint
@@ -121,7 +144,7 @@ class TurboRegPlus:
         # 计算 原点 和 目标 点 的重叠率
         src_overlap_ratio_plus, _ = self.get_overlap_ratio(kpts_src, kpts_dst_old, trans_gt)
         _, dst_overlap_ratio_plus = self.get_overlap_ratio(kpts_src_old, kpts_dst, trans_gt)
-        print(f"src_overlap plus : {src_overlap_ratio_plus}, dst_overlap plus: {dst_overlap_ratio_plus}")
+        print(f"src_overlap plus : {src_overlap_ratio_plus} points {kpts_src.shape[0]}, dst_overlap plus: {dst_overlap_ratio_plus} points {kpts_dst.shape[0]}")
 
 
 
@@ -153,11 +176,12 @@ class TurboRegPlus:
         # inlier_ratio = labels.float().sum() / labels.size(0)
         # print(f'inlier_ratio 1tok: {inlier_ratio.item():.4f}')
 
+"""
 
-
-        corr_kpts_src = kpts_src_old[corr_ind[:, 0]]
-        corr_kpts_dst = kpts_dst_old[corr_ind[:, 1]]
-
+        # corr_kpts_src = kpts_src_old[corr_ind[:, 0]]
+        # corr_kpts_dst = kpts_dst_old[corr_ind[:, 1]]
+        corr_kpts_src =src_keypts_corr_final[0]
+        corr_kpts_dst = tgt_keypts_corr_final[0]
 
         # N_node = min(corr_kpts_src.size(0), self.max_N)
         # if N_node < corr_kpts_src.size(0):
@@ -349,6 +373,31 @@ class TurboRegPlus:
         # build the ground truth label
         frag1 = src_keypts[corr[:, 0]]
         frag2 = tgt_keypts[corr[:, 1]]
+        frag1_warp = transform(frag1, gt_trans)
+        # distance = torch.sqrt(torch.sum(torch.power(frag1_warp - frag2, 2), axis=1))
+        distance = torch.norm(frag1_warp - frag2, dim=1)
+        labels = (distance < self.tau_inlier)
+        return labels
+    def inlier_ratio_by_point(self, src_keypts, tgt_keypts, corr, gt_trans):
+        def transform(pts, trans):
+            """
+            Applies the SE3 transformations, support torch.Tensor and np.ndarry.  Equation: trans_pts = R @ pts + t
+            Input
+                - pts: [num_pts, 3] or [bs, num_pts, 3], pts to be transformed
+                - trans: [4, 4] or [bs, 4, 4], SE3 transformation matrix
+            Output
+                - pts: [num_pts, 3] or [bs, num_pts, 3] transformed pts
+            """
+            if len(pts.shape) == 3:
+                trans_pts = trans[:, :3, :3] @ pts.permute(0, 2, 1) + trans[:, :3, 3:4]
+                return trans_pts.permute(0, 2, 1)
+            else:
+                trans_pts = trans[:3, :3] @ pts.T + trans[:3, 3:4]
+                return trans_pts.T
+
+        # build the ground truth label
+        frag1 = src_keypts
+        frag2 = tgt_keypts
         frag1_warp = transform(frag1, gt_trans)
         # distance = torch.sqrt(torch.sum(torch.power(frag1_warp - frag2, 2), axis=1))
         distance = torch.norm(frag1_warp - frag2, dim=1)

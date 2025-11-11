@@ -5,6 +5,7 @@ Point Cloud Registration using GPU acceleration with PyTorch
 
 from .turboreg import TurboRegGPU
 from .turboregPlus import TurboRegPlus
+from .turboregCopCons import TurboRegCopCons
 from .model_selection import ModelSelection, MetricType
 from .rigid_transform import RigidTransform, rigid_transform_3d
 from .core_turboreg import (

@@ -131,11 +131,14 @@ class TDMatchFCGFAndFPFHDataset:
         else :
             src_npz = np.load(pair_info["src_npz_file"])
             dst_npz = np.load(pair_info["dst_npz_file"])
-
-
-
             feature_kpts_src = src_npz['feature']
             feature_kpts_dst = dst_npz['feature']
+            if self.descriptor_type == 'fpfh':
+                feature_kpts_src = feature_kpts_src / (np.linalg.norm(feature_kpts_src, axis=1, keepdims=True) + 1e-6)
+                feature_kpts_dst = feature_kpts_dst / (np.linalg.norm(feature_kpts_dst, axis=1, keepdims=True) + 1e-6)
+
+
+
 
             cal_corr,cal_lable = self.get_corr(pair_info["src_npz_file"], pair_info["dst_npz_file"], trans_gt)
             corr_ind = cal_corr
